@@ -108,6 +108,24 @@ module Permissions = struct
   let open_settings a p = unit_call "permissions.settings" [a; special_name p]
 end
 
+module Camera = struct
+  type photo = string
+  type capture = Captured of photo | Cancelled
+  let uri photo = photo
+  let of_uri uri = one "camera.open" [uri]
+  let capture activity ~name =
+    if name = "" || String.contains name '/' || String.contains name '\\'
+      || not (Filename.check_suffix name ".jpg" || Filename.check_suffix name ".jpeg")
+    then invalid "Expected a JPEG basename"
+    else call "camera.capture" [activity; name] >|= function
+      | Ok [||] -> Ok Cancelled
+      | Ok [|uri|] -> Ok (Captured uri)
+      | Error e -> Error e
+      | Ok _ -> Error (Error.Protocol "Camera capture result")
+  let read photo = one "camera.read" [photo]
+  let delete photo = unit_call "camera.delete" [photo]
+end
+
 module Alarm = struct
   type mode = Exact | Alarm_clock
   let can_schedule_exact () = bool "alarm.allowed" []
@@ -115,6 +133,24 @@ module Alarm = struct
     if id = "" || handler = "" || at_ms < 0L then invalid "Invalid alarm id, handler or timestamp"
     else unit_call "alarm.schedule" [id; i64 at_ms; (match mode with Exact -> "exact" | Alarm_clock -> "clock"); handler; payload]
   let cancel ~id = unit_call "alarm.cancel" [id]
+  module Screen = struct
+    type t = {
+      id : string; notification_id : int; title : string; text : string;
+      stop_label : string; snooze_label : string;
+      stop_handler : string; snooze_handler : string; payload : string;
+    }
+    let valid t = t.id <> "" && t.stop_label <> "" && t.snooze_label <> ""
+      && t.stop_handler <> "" && t.snooze_handler <> ""
+    let args t = [t.id; s t.notification_id; t.title; t.text; t.stop_label;
+      t.snooze_label; t.stop_handler; t.snooze_handler; t.payload]
+    let show activity t = if not (valid t) then invalid "Alarm screen labels, id and handlers are required"
+      else unit_call "alarm.screen.show" (activity :: args t)
+    let notify ~channel ~small_icon ~full_screen t =
+      if not (valid t) || channel = "" || small_icon <= 0 then invalid "Invalid alarm screen notification"
+      else unit_call "alarm.screen.notify" ([channel; s small_icon; string_of_bool full_screen] @ args t)
+    let dismiss ~id ~notification_id = if id = "" then invalid "Alarm screen id is required"
+      else unit_call "alarm.screen.dismiss" [id; s notification_id]
+  end
 end
 
 module Notification = struct

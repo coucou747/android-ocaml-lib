@@ -44,11 +44,40 @@ module Permissions : sig
   val check_special : special -> bool response
   val open_settings : Activity.t -> special -> unit response
 end
+module Camera : sig
+  type photo
+  type capture = Captured of photo | Cancelled
+  (** Delegate to the system camera. [name] is a fresh private JPEG basename.
+      Cancellation by the user is [Ok Cancelled]. Rotation preserves the request;
+      process death does not preserve the OCaml continuation. *)
+  val capture : Activity.t -> name:string -> capture response
+  val uri : photo -> string
+  (** Restore a saved URI, checking ownership and file existence. *)
+  val of_uri : string -> photo response
+  val read : photo -> string response
+  val delete : photo -> unit response
+end
 module Alarm : sig
   type mode = Exact | Alarm_clock
   val can_schedule_exact : unit -> bool response
   val schedule : id:string -> at_ms:int64 -> mode:mode -> handler:string -> payload:string -> unit response
   val cancel : id:string -> unit response
+  module Screen : sig
+    type t = {
+      id : string; notification_id : int; title : string; text : string;
+      stop_label : string; snooze_label : string;
+      stop_handler : string; snooze_handler : string; payload : string;
+    }
+    (** Show from a foreground activity. Buttons dispatch the named Runtime
+        handlers with [payload]; the client stops sound or schedules snooze. *)
+    val show : Activity.t -> t -> unit response
+    (** Post an alarm notification with direct activity actions. Requires a HIGH
+        importance channel. [full_screen=true] requires the matching authorization;
+        denial is explicit, without downgrading the request. Android decides
+        whether an authorized request opens full screen or appears heads-up. *)
+    val notify : channel:string -> small_icon:int -> full_screen:bool -> t -> unit response
+    val dismiss : id:string -> notification_id:int -> unit response
+  end
 end
 module Notification : sig
   type importance = Low | Default | High

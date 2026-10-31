@@ -14,6 +14,11 @@ public final class Bridge {
     public static byte[][] dispatch(byte[] op,byte[][] args){
         String name=new String(op,StandardCharsets.UTF_8);
         switch(name){
+        case "camera.capture":return new String(args[1],StandardCharsets.UTF_8).equals("cancel.jpg")
+            ?new byte[][]{text("ok")}:new byte[][]{text("ok"),text("content://test/photo.jpg")};
+        case "camera.open":return new byte[][]{text("ok"),args[0]};
+        case "camera.read":return new byte[][]{text("ok"),binary};
+        case "camera.delete":case "alarm.screen.show":case "alarm.screen.dismiss":case "alarm.screen.notify":return new byte[][]{text("ok")};
         case "storage.read":return new byte[][]{text("ok"),binary};
         case "storage.write":
             if(!Arrays.equals(args[1],binary))failure="Binary JNI write mismatch";

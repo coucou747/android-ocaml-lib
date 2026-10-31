@@ -3,6 +3,9 @@ package org.ocaml.android.test;
 import android.app.*;
 import android.content.*;
 import android.os.Bundle;
+import android.provider.MediaStore;
+import android.net.Uri;
+import java.io.OutputStream;
 import org.ocaml.android.Bridge;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
@@ -19,6 +22,44 @@ public final class BindingInstrumentation extends Instrumentation {
     static byte[][] ok(String op,Object... args){byte[][] r=call(op,args);check(new String(r[0],StandardCharsets.UTF_8).equals("ok"),op+" failed: "+Arrays.deepToString(r));return r;}
     static String value(String op,Object... args){return new String(ok(op,args)[1],StandardCharsets.UTF_8);}
     static void check(boolean condition,String message){if(!condition)throw new AssertionError(message);}
+    private void photoTests(String owner) throws Exception {
+        final byte[] jpeg={ (byte)0xff,(byte)0xd8,42,(byte)0xff,(byte)0xd9 };
+        ActivityMonitor camera=new ActivityMonitor(){
+            @Override public ActivityResult onStartActivity(Intent intent){
+                if(!MediaStore.ACTION_IMAGE_CAPTURE.equals(intent.getAction()))return null;
+                try(OutputStream out=getTargetContext().getContentResolver().openOutputStream((Uri)intent.getParcelableExtra(MediaStore.EXTRA_OUTPUT))){out.write(jpeg);}
+                catch(Exception e){throw new AssertionError(e);}
+                return new ActivityResult(Activity.RESULT_OK,null);
+            }
+        };
+        addMonitor(camera);
+        String name=java.util.UUID.randomUUID()+".jpg";
+        String uri;
+        try{uri=value("camera.capture",owner,name);}finally{removeMonitor(camera);}
+        check(value("camera.open",uri).equals(uri),"Photo restored from saved URI");
+        check(Arrays.equals(ok("camera.read",uri)[1],jpeg),"Full-size photo output and provider URI");
+        ok("camera.delete",uri);
+        ActivityMonitor cancelled=new ActivityMonitor(){
+            @Override public ActivityResult onStartActivity(Intent intent){
+                return MediaStore.ACTION_IMAGE_CAPTURE.equals(intent.getAction())?new ActivityResult(Activity.RESULT_CANCELED,null):null;
+            }
+        };
+        addMonitor(cancelled);
+        try{check(ok("camera.capture",owner,java.util.UUID.randomUUID()+".jpg").length==1,"User camera cancellation");}
+        finally{removeMonitor(cancelled);}
+        check(new String(call("camera.capture",owner,"../escape.jpg")[1],StandardCharsets.UTF_8).equals("argument"),"Photo path traversal rejected");
+        check(new String(call("camera.read","content://other/secret")[1],StandardCharsets.UTF_8).equals("argument"),"Foreign provider rejected");
+    }
+    private void alarmScreenTests(String owner) {
+        ActivityMonitor monitor=addMonitor("org.ocaml.android.AlarmScreenActivity",null,false);
+        try {
+            ok("alarm.screen.show",owner,"instrumentation",41,"Alarm","Test","Stop","Snooze","integration.stop","integration.snooze","payload");
+            Activity screen=monitor.waitForActivity();waitForIdleSync();
+            check(screen instanceof org.ocaml.android.AlarmScreenActivity,"Alarm activity displayed");
+            ok("alarm.screen.dismiss","instrumentation",41);waitForIdleSync();
+            check(screen.isFinishing() || screen.isDestroyed(),"Alarm screen dismissed");
+        } finally {removeMonitor(monitor);}
+    }
     @Override public void onStart(){
         Bundle result=new Bundle();
         Activity activity=null;
@@ -48,6 +89,8 @@ public final class BindingInstrumentation extends Instrumentation {
             check(Arrays.equals(ok("keystore.decrypt","integration",encrypted)[1],binary),"Keystore roundtrip");
             ok("keystore.delete","integration");ok("storage.remove","roundtrip.bin");
             ok("preferences.remove","integration","answer");
+            photoTests(owner);
+            alarmScreenTests(owner);
             final Activity closing=activity;runOnMainSync(closing::finish);waitForIdleSync();
             check(new String(call("ui.getText",text)[1],StandardCharsets.UTF_8).equals("handle"),"Destroyed activity invalidates views");
             result.putString("stream","Platform binding tests passed\n");finish(Activity.RESULT_OK,result);

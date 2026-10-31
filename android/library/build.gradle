@@ -12,7 +12,7 @@ android {
     compileOptions { sourceCompatibility JavaVersion.toVersion(config.getProperty('jdkVersion')); targetCompatibility JavaVersion.toVersion(config.getProperty('jdkVersion')) }
     publishing { singleVariant('release') { withSourcesJar() } }
 }
-dependencies { implementation "androidx.work:work-runtime:${config.getProperty('workVersion')}" }
+dependencies { implementation "androidx.core:core:${config.getProperty('coreVersion')}"; implementation "androidx.work:work-runtime:${config.getProperty('workVersion')}" }
 // Publishing a POM preserves WorkManager's transitive dependencies.
 afterEvaluate {
   if (providers.gradleProperty('libraryVersion').isPresent()) {

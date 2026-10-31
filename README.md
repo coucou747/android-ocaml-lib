@@ -166,3 +166,60 @@ promesse de handler et se termine à sa résolution. Les restrictions de démarr
 en arrière-plan continuent de s'appliquer. `start_service` confirme la demande de
 démarrage ; les erreurs survenant ensuite dans le cycle de vie du service sont
 journalisées dans Logcat.
+
+## Capture photo
+
+`Android.Camera.capture activity ~name` ouvre l’application appareil photo installée.
+Le nom fourni doit être un nouveau basename JPEG (`.jpg` ou `.jpeg`), sans chemin.
+Un fichier existant est refusé. Le résultat est `Ok (Captured photo)` ou `Ok Cancelled`
+si l’utilisateur revient sans photo ; l’absence d’application caméra donne `Unavailable`.
+
+`Camera.read photo` lit les octets de la photo et `Camera.delete photo` la supprime.
+`Camera.of_uri uri` restaure une photo depuis une URI conservée, après vérification
+de son appartenance à l’application et de l’existence du fichier.
+`Camera.uri photo` donne son URI `content://`, utilisable avec une autorisation URI
+explicite pour le partage. Il s’agit d’un fichier privé, pas d’une insertion automatique
+dans la galerie. Le stockage dérive de `Context.getFilesDir()` ; le sous-répertoire
+interne `ocaml_photos` est le seul exposé par le fournisseur dédié, non exporté.
+Les permissions temporaires de l’application caméra sont révoquées à la fin.
+
+La capture produit un fichier pleine résolution via `EXTRA_OUTPUT`, pas la miniature
+renvoyée dans les extras. La rotation conserve la demande grâce à l’activité de capture
+dédiée. La mort du processus ne conserve pas la continuation OCaml ; les photos privées
+éventuellement laissées sur disque doivent être gérées par l’application. La capture
+reste protégée de l’annulation Lwt ; l’utilisateur l’annule dans l’application caméra.
+Les métadonnées EXIF et l’orientation restent celles de l’appareil photo.
+
+Cette délégation ne demande pas elle-même `CAMERA`. Si le client déclare cette permission,
+il doit obtenir l’autorisation avant la capture. Aucun accès général aux fichiers ou
+à la galerie n’est demandé par la bibliothèque.
+
+## Écran d’alarme
+
+`Android.Alarm.Screen.t` contient l’identifiant d’alarme, l’identifiant de notification,
+le titre, le texte, les deux libellés, les noms de handlers `stop_handler` et
+`snooze_handler`, ainsi que leur payload. Tous sont fournis par l’application.
+Les handlers sont enregistrés avec `Runtime.register`, y compris au démarrage sans UI.
+
+- `Alarm.Screen.show activity screen` ouvre immédiatement l’écran depuis une activité.
+- `Alarm.Screen.notify ~channel ~small_icon ~full_screen screen` publie une notification
+  d’alarme avec ouverture directe de l’activité et actions Arrêter/Reporter.
+- `Alarm.Screen.dismiss ~id ~notification_id` ferme l’écran et annule sa notification.
+
+Le canal doit exister avec importance `High`. Le client déclare et demande
+`POST_NOTIFICATIONS` quand nécessaire. Pour `full_screen:true`, il déclare
+`USE_FULL_SCREEN_INTENT` et vérifie `Permissions.check_special Full_screen_intent`.
+Un refus est retourné explicitement ; pour demander volontairement une simple notification,
+utiliser `full_screen:false`. Android peut afficher une notification prioritaire au lieu
+d’ouvrir l’activité lorsque le téléphone est utilisé, même si l’autorisation est accordée.
+
+L’activité affiche au-dessus du verrouillage et allume l’écran, sans déverrouiller le
+terminal. Les boutons ferment l’écran, retirent la notification et transmettent le
+payload au handler correspondant. Arrêter le son et reprogrammer un report relèvent
+respectivement des API `Audio` et `Alarm` dans ces handlers ; aucune durée n’est inventée.
+Les échecs asynchrones des handlers sont journalisés dans Logcat. L’action effectuée
+n’est pas une transaction durable : l’application doit rendre ses traitements idempotents.
+
+L’application technique contient désormais les boutons « Prendre une photo » et
+« Écran d’alarme ». Son bouton Reporter ne programme rien : il vérifie la livraison
+au handler OCaml, tandis que la politique de report appartient à chaque client.

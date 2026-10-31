@@ -120,6 +120,13 @@ public final class Bridge {
         try {
             if(op.startsWith("ui.") || op.startsWith("events.") || op.startsWith("activity.") || op.equals("permissions.settings"))
                 return ui(()->execute(op,a,bytes));
+            if(op.equals("camera.capture")) {
+                CompletableFuture<String[]> result=ui(()->PhotoCaptureActivity.capture(get(a[0],Activity.class),a[1]));
+                return ok((Object[])result.get());
+            }
+            if(op.equals("alarm.screen.show")) return ui(()->{AlarmScreenActivity.show(get(a[0],Activity.class),Arrays.copyOfRange(a,1,a.length));return ok();});
+            if(op.equals("alarm.screen.notify")) return ui(()->{AlarmScreenActivity.notify(context,a[0],Integer.parseInt(a[1]),Boolean.parseBoolean(a[2]),Arrays.copyOfRange(a,3,a.length));return ok();});
+            if(op.equals("alarm.screen.dismiss")) return ui(()->{AlarmScreenActivity.dismiss(context,a[0],Integer.parseInt(a[1]));return ok();});
             if(op.equals("permissions.request")) {
                 CompletableFuture<String[]> result=ui(()->get(a[0],BridgeActivity.class).request(Arrays.copyOfRange(a,1,a.length)));
                 return ok((Object[])result.get());
@@ -165,6 +172,9 @@ public final class Bridge {
     }
     private static byte[][] execute(String op,String[] a,byte[][] raw) throws Exception {
         switch(op) {
+        case "camera.open": return ok(PhotoCaptureActivity.open(context,a[0]));
+        case "camera.read": return ok(PhotoCaptureActivity.read(context,a[0]));
+        case "camera.delete": PhotoCaptureActivity.delete(context,a[0]);return ok();
         case "runtime.complete": { CompletableFuture<String> f=pending.remove(a[0]); if(f!=null) f.complete(a[1]); return ok(); }
         case "unsubscribe": { ui(()->{cleanupSubscription(a[0]);return null;}); lifecycle.remove(a[0]); return ok(); }
         case "activity.current": if(current==null) throw new NoSuchElementException("No current activity"); return ok(current.bridgeId);

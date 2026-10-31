@@ -223,3 +223,62 @@ n’est pas une transaction durable : l’application doit rendre ses traitement
 L’application technique contient désormais les boutons « Prendre une photo » et
 « Écran d’alarme ». Son bouton Reporter ne programme rien : il vérifie la livraison
 au handler OCaml, tandis que la politique de report appartient à chaque client.
+
+## Aperçus, défilement et champs texte
+
+`Ui.image activity ~uri ~max_width_px ~max_height_px` crée un aperçu local.
+`Ui.set_image_uri` remplace celui d’une vue existante. Les URI acceptées sont
+`content://`, `file://` et `android.resource://`, avec les droits d’accès du client.
+Le décodage s’exécute hors thread graphique ; l’affichage conserve les proportions
+et tient dans les limites explicites, sans agrandir le bitmap source au décodage. L’orientation
+EXIF est appliquée. Sur API 26/27, une image sans EXIF exploitable utilise son
+orientation de pixels. Une erreur de remplacement conserve l’image précédente.
+
+Pour une photo capturée :
+
+```ocaml
+Android.Activity.display_size activity >>= fun result ->
+match result with
+| Error e -> Lwt.return (Error e)
+| Ok size -> Android.Ui.image activity ~uri:(Android.Camera.uri photo)
+    ~max_width_px:size.width_px ~max_height_px:size.height_px
+```
+
+Les dimensions sont des pixels physiques. Elles peuvent aussi être choisies selon
+le budget de présentation propre à l’application. Les aperçus ne sont pas mis en
+cache par la bibliothèque ; libérer les vues retirées via `Ui.release`.
+
+`Ui.scroll_view activity` crée un conteneur vertical. Ajouter un seul `LinearLayout`
+comme enfant direct, puis les tâches dans ce layout avec `Ui.add`. Un second enfant
+direct est refusé. Les lignes sont toutes créées : ce n’est pas une liste virtualisée.
+
+Pour un `EditText`, `Ui.set_input_type` accepte `Text` ou
+`Number { signed; decimal }`. Le mode numérique est sur une seule ligne ; le mode
+texte préserve son réglage multiligne. `Ui.set_multiline field true` active plusieurs
+lignes pour le texte et refuse le mode numérique. `Ui.set_hint field "…"` définit
+l’indication. `Ui.set_error field (Some "…")` affiche une erreur et `None` l’efface.
+Ces réglages de clavier ne remplacent pas la validation métier des valeurs saisies.
+Les dialogues et les autres propriétés de présentation ne sont pas ajoutés ici.
+
+## Ressources, son d’alarme et dates locales
+
+`Resources.resolve ~scope ~kind ~name` renvoie un identifiant Android non nul.
+Choisir `Application` pour les ressources du client ou `Android` pour celles du
+système, et `Drawable`, `Mipmap`, `Raw`, `String` ou `Color` pour le type.
+Le nom est non qualifié, par exemple `ic_lock_idle_alarm` dans le scope `Android`.
+Une ressource manquante donne `Error.Unavailable`, jamais l’identifiant zéro.
+Un client qui réduit ses ressources à la compilation doit conserver explicitement
+les noms résolus dynamiquement (règles `tools:keep` du resource shrinker).
+
+`Audio.default_alarm_uri ()` renvoie `Some uri` pour la sonnerie d’alarme configurée,
+ou `None` si aucune n’est sélectionnée. La bibliothèque ne substitue aucun autre son.
+L’URI peut être passée à `Audio.play ~uri ~loop:true`, sous réserve des droits système.
+
+`Locale.time_zone ()`, `Locale.language_tag ()` et `Locale.uses_24_hour_clock ()`
+consultent les réglages courants du téléphone et de l’application.
+`Locale.format_date`, `Locale.format_time` et `Locale.format_date_time` prennent
+`~at_ms` en millisecondes Unix (`int64`) et produisent les textes locaux. Le fuseau,
+la langue et le choix 12/24 heures sont relus à chaque appel ; aucun format de date
+ni fuseau d’application n’est fixé. Les dates avant 1970 sont acceptées. Ces API
+servent à l’affichage ; les règles de récurrence et leurs politiques DST restent
+la responsabilité de l’application.

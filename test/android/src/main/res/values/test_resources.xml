@@ -1,0 +1,3 @@
+<resources>
+    <item name="integration_alarm_icon" type="drawable">@android:drawable/ic_lock_idle_alarm</item>
+</resources>

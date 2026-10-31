@@ -9,6 +9,29 @@ let () = Android.Runtime.set_entry (fun () ->
     Lwt_list.iter_p (fun _ ->
       Android.Storage.read_file ~name:"binary" >>= require >|= fun data -> assert (data = binary))
       [(); (); (); (); (); (); (); ()] >>= fun () ->
+    Android.Activity.display_size activity >>= require >>= fun bounds ->
+    assert (bounds.width_px = 1080 && bounds.height_px = 1920);
+    Android.Ui.scroll_view activity >>= require >>= fun scroll ->
+    Android.Ui.add scroll view >>= require >>= fun () ->
+    Android.Ui.set_input_type view (Number {signed=true;decimal=true}) >>= require >>= fun () ->
+    Android.Ui.set_input_type view Text >>= require >>= fun () ->
+    Android.Ui.set_multiline view true >>= require >>= fun () ->
+    Android.Ui.set_hint view "Indication" >>= require >>= fun () ->
+    Android.Ui.set_error view (Some "Erreur") >>= require >>= fun () ->
+    Android.Ui.set_error view None >>= require >>= fun () ->
+    Android.Ui.image activity ~uri:"content://test/photo.jpg" ~max_width_px:bounds.width_px ~max_height_px:bounds.height_px >>= require >>= fun image ->
+    Android.Ui.set_image_uri image ~uri:"content://test/other.jpg" ~max_width_px:bounds.width_px ~max_height_px:bounds.height_px >>= require >>= fun () ->
+    Android.Ui.release image >>= require >>= fun () ->
+    Android.Ui.image activity ~uri:"content://test/photo.jpg" ~max_width_px:0 ~max_height_px:1 >>= (function
+      | Error (Android.Error.Invalid_argument _) -> Lwt.return_unit | _ -> Lwt.fail_with "Image bounds validation") >>= fun () ->
+    Android.Resources.resolve ~scope:Android ~kind:Drawable ~name:"ic_lock_idle_alarm" >>= require >>= fun icon -> assert (icon > 0);
+    Android.Audio.default_alarm_uri () >>= require >>= fun ringtone -> assert (ringtone = Some "content://media/alarm");
+    Android.Audio.default_alarm_uri () >>= require >>= fun ringtone -> assert (ringtone = None);
+    Android.Locale.time_zone () >>= require >>= fun zone -> assert (zone = "Europe/Paris");
+    Android.Locale.language_tag () >>= require >>= fun language -> assert (language = "fr-FR");
+    Android.Locale.uses_24_hour_clock () >>= require >>= fun clock -> assert clock;
+    Lwt_list.iter_s (fun f -> f ~at_ms:2147483648000L >>= require >|= fun text -> assert (text = "date locale"))
+      [Android.Locale.format_date;Android.Locale.format_time;Android.Locale.format_date_time] >>= fun () ->
     Android.Camera.capture activity ~name:"photo.jpg" >>= require >>= (function
       | Android.Camera.Cancelled -> Lwt.fail_with "Expected captured photo"
       | Captured photo ->

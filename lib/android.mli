@@ -13,6 +13,9 @@ end
 module Activity : sig
   type t
   type event = Created | Started | Resumed | Paused | Stopped | Destroyed
+  type size = { width_px : int; height_px : int }
+  (** Current window dimensions in physical pixels, suitable for image bounds. *)
+  val display_size : t -> size response
   val current : unit -> t response
   val set_keep_screen_on : t -> bool -> unit response
   val on_lifecycle : (t -> event -> unit Lwt.t) -> Subscription.t response
@@ -24,12 +27,45 @@ module Ui : sig
   val button : Activity.t -> string -> view response
   val edit_text : Activity.t -> string -> view response
   val linear_layout : Activity.t -> orientation -> view response
+  (** Vertical ScrollView: use [add] once with a LinearLayout containing the rows.
+      This container does not virtualize rows. *)
+  val scroll_view : Activity.t -> view response
+  (** Decode a local content/file/android.resource URI off the UI thread.
+      Explicit pixel bounds limit the decoded preview; orientation is respected. *)
+  val image : Activity.t -> uri:string -> max_width_px:int -> max_height_px:int -> view response
+  val set_image_uri : view -> uri:string -> max_width_px:int -> max_height_px:int -> unit response
+  type input_type = Text | Number of { signed : bool; decimal : bool }
+  (** Numeric input uses a single line. Text preserves its multiline setting. *)
+  val set_input_type : view -> input_type -> unit response
+  (** Multiline is supported on text input only. *)
+  val set_multiline : view -> bool -> unit response
+  val set_hint : view -> string -> unit response
+  (** [None] clears the inline validation error. *)
+  val set_error : view -> string option -> unit response
   val add : view -> view -> unit response
   val show : Activity.t -> view -> unit response
   val set_text : view -> string -> unit response
   val get_text : view -> string response
   val set_enabled : view -> bool -> unit response
   val release : view -> unit response
+end
+module Resources : sig
+  type scope = Application | Android
+  type kind = Drawable | Mipmap | Raw | String | Color
+  (** Resolve an unqualified name. A missing resource is [Error.Unavailable],
+      never the invalid resource identifier zero. *)
+  val resolve : scope:scope -> kind:kind -> name:string -> int response
+end
+module Locale : sig
+  (** Read the current phone/application configuration at each call. *)
+  val time_zone : unit -> string response
+  val language_tag : unit -> string response
+  val uses_24_hour_clock : unit -> bool response
+  (** Unix milliseconds, formatted in the current device time zone and locale.
+      Time formatting follows the user's 12/24-hour preference. *)
+  val format_date : at_ms:int64 -> string response
+  val format_time : at_ms:int64 -> string response
+  val format_date_time : at_ms:int64 -> string response
 end
 module Events : sig
   type touch = { action : int; x : float; y : float }
@@ -87,6 +123,9 @@ module Notification : sig
 end
 module Audio : sig
   type player
+  (** The configured alarm sound URI; [None] means no default sound (silent).
+      No ringtone or notification sound is substituted. *)
+  val default_alarm_uri : unit -> string option response
   val play : uri:string -> loop:bool -> player response
   val stop : player -> unit response
 end

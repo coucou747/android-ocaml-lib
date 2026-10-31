@@ -2,6 +2,7 @@ plugins { id 'com.android.application' }
 def config = rootProject.ext.androidConfig
 android {
     namespace "${config.getProperty('androidNamespace')}.test"
+    ndkVersion config.getProperty('ndkVersion')
     compileSdk config.getProperty('compileSdk').toInteger()
     buildToolsVersion config.getProperty('buildToolsVersion')
     defaultConfig {
@@ -12,6 +13,7 @@ android {
         ndk { abiFilters 'arm64-v8a' }
     }
     compileOptions { sourceCompatibility JavaVersion.toVersion(config.getProperty('jdkVersion')); targetCompatibility JavaVersion.toVersion(config.getProperty('jdkVersion')) }
+    packaging { jniLibs { keepDebugSymbols += ['**/libintegration.so'] } }
     sourceSets.main.jniLibs.srcDirs = [new File(rootDir, '../_build/test-jni')]
 }
 dependencies { implementation project(':library') }

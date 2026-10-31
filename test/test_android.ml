@@ -18,6 +18,8 @@ let () =
     expect_invalid "invalid alarm screen notification" (Android.Alarm.Screen.notify ~channel:"" ~small_icon:1 ~full_screen:true
       {id="test"; notification_id=1; title=""; text=""; stop_label="Stop"; snooze_label="Snooze";
        stop_handler="stop"; snooze_handler="snooze"; payload=""}) >>= fun () ->
+    expect_invalid "qualified resource name" (Android.Resources.resolve ~scope:Android ~kind:Drawable ~name:"android:drawable/icon") >>= fun () ->
+    expect_invalid "missing resource name" (Android.Resources.resolve ~scope:Application ~kind:Mipmap ~name:"") >>= fun () ->
     Android.Storage.read_file ~name:"host-check" >|= function
     | Error (Android.Error.Unavailable _) -> ()
     | _ -> failwith "Host must report Android unavailable");

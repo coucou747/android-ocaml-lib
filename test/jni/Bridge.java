@@ -8,12 +8,24 @@ public final class Bridge {
     static final BlockingQueue<byte[][]> events=new LinkedBlockingQueue<>();
     static final CountDownLatch done=new CountDownLatch(1);
     static volatile String failure;
+    static int alarmReads;
     static byte[] binary=new byte[]{0,(byte)255,42,0};
     static byte[] text(String s){return s.getBytes(StandardCharsets.UTF_8);}
     public static byte[][] takeEvent() throws InterruptedException{return events.take();}
     public static byte[][] dispatch(byte[] op,byte[][] args){
         String name=new String(op,StandardCharsets.UTF_8);
         switch(name){
+        case "activity.displaySize":return new byte[][]{text("ok"),text("1080"),text("1920")};
+        case "ui.image":case "ui.scroll":return new byte[][]{text("ok"),text("new-view")};
+        case "ui.imageUri":case "ui.inputType":case "ui.multiline":case "ui.hint":case "ui.error":case "ui.add":case "ui.release":return new byte[][]{text("ok")};
+        case "resources.resolve":return new byte[][]{text("ok"),text("17301536")};
+        case "locale.timeZone":return new byte[][]{text("ok"),text("Europe/Paris")};
+        case "locale.languageTag":return new byte[][]{text("ok"),text("fr-FR")};
+        case "locale.is24Hour":return new byte[][]{text("ok"),text("true")};
+        case "locale.date":case "locale.time":case "locale.dateTime":
+            if(!new String(args[0],StandardCharsets.UTF_8).equals("2147483648000"))failure="64-bit date transport";
+            return new byte[][]{text("ok"),text("date locale")};
+        case "audio.defaultAlarm":return ++alarmReads==1?new byte[][]{text("ok"),text("content://media/alarm")}:new byte[][]{text("ok")};
         case "camera.capture":return new String(args[1],StandardCharsets.UTF_8).equals("cancel.jpg")
             ?new byte[][]{text("ok")}:new byte[][]{text("ok"),text("content://test/photo.jpg")};
         case "camera.open":return new byte[][]{text("ok"),args[0]};

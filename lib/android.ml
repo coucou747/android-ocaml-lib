@@ -60,6 +60,13 @@ let subscribe command args callback =
 module Activity = struct
   type t = string
   type event = Created | Started | Resumed | Paused | Stopped | Destroyed
+  type size = { width_px : int; height_px : int }
+  let display_size activity = call "activity.displaySize" [activity] >|= function
+    | Error e -> Error e
+    | Ok [|w;h|] -> (match int_of_string_opt w,int_of_string_opt h with
+      | Some width_px,Some height_px when width_px > 0 && height_px > 0 -> Ok {width_px;height_px}
+      | _ -> Error (Error.Protocol "Invalid activity display size"))
+    | Ok _ -> Error (Error.Protocol "Activity display size")
   let current () = one "activity.current" []
   let set_keep_screen_on t value = unit_call "activity.screen" [t; string_of_bool value]
   let on_lifecycle f = subscribe "activity.lifecycle" [] (fun a ->
@@ -78,12 +85,45 @@ module Ui = struct
   let button a label = one "ui.button" [a; label]
   let edit_text a text = one "ui.edit" [a; text]
   let linear_layout a orientation = one "ui.layout" [a; (match orientation with Horizontal -> "horizontal" | Vertical -> "vertical")]
+  let scroll_view a = one "ui.scroll" [a]
+  let image a ~uri ~max_width_px ~max_height_px =
+    if uri = "" || max_width_px <= 0 || max_height_px <= 0 then invalid "Image URI and positive bounds are required"
+    else one "ui.image" [a; uri; s max_width_px; s max_height_px]
+  let set_image_uri view ~uri ~max_width_px ~max_height_px =
+    if uri = "" || max_width_px <= 0 || max_height_px <= 0 then invalid "Image URI and positive bounds are required"
+    else unit_call "ui.imageUri" [view; uri; s max_width_px; s max_height_px]
+  type input_type = Text | Number of { signed : bool; decimal : bool }
+  let set_input_type view typ =
+    let kind, signed, decimal = match typ with Text -> "text",false,false
+      | Number {signed;decimal} -> "number",signed,decimal in
+    unit_call "ui.inputType" [view; kind; string_of_bool signed; string_of_bool decimal]
+  let set_multiline view value = unit_call "ui.multiline" [view; string_of_bool value]
+  let set_hint view text = unit_call "ui.hint" [view; text]
+  let set_error view error = unit_call "ui.error" [view; (match error with None -> "false" | Some _ -> "true"); Option.value error ~default:""]
   let add parent child = unit_call "ui.add" [parent; child]
   let show a root = unit_call "ui.show" [a; root]
   let set_text v text = unit_call "ui.setText" [v; text]
   let get_text v = one "ui.getText" [v]
   let set_enabled v b = unit_call "ui.enabled" [v; string_of_bool b]
   let release v = unit_call "ui.release" [v]
+end
+
+module Resources = struct
+  type scope = Application | Android
+  type kind = Drawable | Mipmap | Raw | String | Color
+  let resolve ~scope ~kind ~name =
+    if name = "" || String.contains name ':' || String.contains name '/' then invalid "Expected an unqualified resource name"
+    else int "resources.resolve" [(match scope with Application -> "app" | Android -> "android");
+      (match kind with Drawable -> "drawable" | Mipmap -> "mipmap" | Raw -> "raw" | String -> "string" | Color -> "color"); name]
+end
+
+module Locale = struct
+  let time_zone () = one "locale.timeZone" []
+  let language_tag () = one "locale.languageTag" []
+  let uses_24_hour_clock () = bool "locale.is24Hour" []
+  let format_date ~at_ms = one "locale.date" [i64 at_ms]
+  let format_time ~at_ms = one "locale.time" [i64 at_ms]
+  let format_date_time ~at_ms = one "locale.dateTime" [i64 at_ms]
 end
 
 module Events = struct
@@ -164,6 +204,9 @@ end
 
 module Audio = struct
   type player = string
+  let default_alarm_uri () = call "audio.defaultAlarm" [] >|= function
+    | Ok [||] -> Ok None | Ok [|uri|] -> Ok (Some uri)
+    | Error e -> Error e | Ok _ -> Error (Error.Protocol "Default alarm URI")
   let play ~uri ~loop = one "audio.play" [uri; string_of_bool loop]
   let stop p = unit_call "audio.stop" [p]
 end

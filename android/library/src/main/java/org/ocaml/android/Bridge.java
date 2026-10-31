@@ -118,6 +118,17 @@ public final class Bridge {
         String op=text(command); String[] a=new String[bytes.length];
         for(int i=0;i<a.length;i++) a[i]=text(bytes[i]);
         try {
+            if(op.equals("ui.image") || op.equals("ui.imageUri")) {
+                android.graphics.Bitmap bitmap=UiSupport.image(context,a[1],Integer.parseInt(a[2]),Integer.parseInt(a[3]));
+                try{return ui(()->{
+                    ImageView view;
+                    if(op.equals("ui.image")) {
+                        view=new ImageView(get(a[0],Activity.class));view.setAdjustViewBounds(true);view.setScaleType(ImageView.ScaleType.FIT_CENTER);
+                        view.setImageBitmap(bitmap);return ok(put(view));
+                    }
+                    view=get(a[0],ImageView.class);view.setImageBitmap(bitmap);return ok();
+                });}catch(Exception e){bitmap.recycle();throw e;}
+            }
             if(op.startsWith("ui.") || op.startsWith("events.") || op.startsWith("activity.") || op.equals("permissions.settings"))
                 return ui(()->execute(op,a,bytes));
             if(op.equals("camera.capture")) {
@@ -135,7 +146,7 @@ public final class Bridge {
         } catch(Exception e) {
             while(e instanceof ExecutionException && e.getCause() instanceof Exception) e=(Exception)e.getCause();
             String kind=e instanceof SecurityException?"permission":e instanceof NoSuchElementException?"handle":
-                e instanceof IllegalArgumentException?"argument":e instanceof UnsupportedOperationException?"unavailable":"platform";
+                e instanceof IllegalArgumentException?"argument":e instanceof UnsupportedOperationException || e instanceof android.content.res.Resources.NotFoundException?"unavailable":"platform";
             return pack("error",kind,e.getClass().getSimpleName()+": "+String.valueOf(e.getMessage()));
         }
     }
@@ -178,6 +189,11 @@ public final class Bridge {
         case "runtime.complete": { CompletableFuture<String> f=pending.remove(a[0]); if(f!=null) f.complete(a[1]); return ok(); }
         case "unsubscribe": { ui(()->{cleanupSubscription(a[0]);return null;}); lifecycle.remove(a[0]); return ok(); }
         case "activity.current": if(current==null) throw new NoSuchElementException("No current activity"); return ok(current.bridgeId);
+        case "activity.displaySize": {
+            Activity activity=get(a[0],Activity.class);
+            if(Build.VERSION.SDK_INT>=30){android.graphics.Rect bounds=activity.getWindowManager().getCurrentWindowMetrics().getBounds();return ok(bounds.width(),bounds.height());}
+            android.util.DisplayMetrics metrics=new android.util.DisplayMetrics();activity.getWindowManager().getDefaultDisplay().getMetrics(metrics);return ok(metrics.widthPixels,metrics.heightPixels);
+        }
         case "activity.lifecycle": lifecycle.add(a[0]); if(current!=null)emit(a[0],current.bridgeId,current.bridgeState); return ok();
         case "activity.screen": { Window w=get(a[0],Activity.class).getWindow(); if(Boolean.parseBoolean(a[1])) w.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON); else w.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);return ok(); }
         case "ui.text": case "ui.button": case "ui.edit": case "ui.layout": {
@@ -185,12 +201,37 @@ public final class Bridge {
             if(op.equals("ui.layout")) { LinearLayout l=new LinearLayout(activity);l.setOrientation(a[1].equals("vertical")?LinearLayout.VERTICAL:LinearLayout.HORIZONTAL);v=l; }
             else { TextView t=op.equals("ui.button")?new Button(activity):op.equals("ui.edit")?new EditText(activity):new TextView(activity);t.setText(a[1]);v=t; }
             return ok(put(v)); }
-        case "ui.add": get(a[0],ViewGroup.class).addView(get(a[1],View.class)); return ok();
+        case "ui.scroll": {ScrollView scroll=new ScrollView(get(a[0],Activity.class));return ok(put(scroll));}
+        case "ui.inputType": UiSupport.inputType(get(a[0],EditText.class),a[1],Boolean.parseBoolean(a[2]),Boolean.parseBoolean(a[3]));return ok();
+        case "ui.multiline": UiSupport.multiline(get(a[0],EditText.class),Boolean.parseBoolean(a[1]));return ok();
+        case "ui.hint": get(a[0],TextView.class).setHint(a[1]);return ok();
+        case "ui.error": get(a[0],TextView.class).setError(Boolean.parseBoolean(a[1])?a[2]:null);return ok();
+        case "resources.resolve": {
+            if(a[2].isEmpty() || a[2].contains(":") || a[2].contains("/"))throw new IllegalArgumentException("Unqualified resource name required");
+            String pkg=a[0].equals("android")?"android":context.getPackageName();
+            int id=context.getResources().getIdentifier(a[2],a[1],pkg);
+            if(id==0)throw new android.content.res.Resources.NotFoundException(pkg+":"+a[1]+"/"+a[2]);
+            return ok(id);
+        }
+        case "locale.timeZone": return ok(TimeZone.getDefault().getID());
+        case "locale.languageTag": return ok(context.getResources().getConfiguration().getLocales().get(0).toLanguageTag());
+        case "locale.is24Hour": return ok(android.text.format.DateFormat.is24HourFormat(context));
+        case "locale.date": return ok(android.text.format.DateFormat.getDateFormat(context).format(new Date(Long.parseLong(a[0]))));
+        case "locale.time": return ok(android.text.format.DateFormat.getTimeFormat(context).format(new Date(Long.parseLong(a[0]))));
+        case "locale.dateTime": return ok(android.text.format.DateUtils.formatDateTime(context,Long.parseLong(a[0]),
+            android.text.format.DateUtils.FORMAT_SHOW_DATE|android.text.format.DateUtils.FORMAT_SHOW_TIME|android.text.format.DateUtils.FORMAT_SHOW_YEAR));
+        case "audio.defaultAlarm": {Uri uri=RingtoneManager.getActualDefaultRingtoneUri(context,RingtoneManager.TYPE_ALARM);return uri==null?ok():ok(uri.toString());}
+        case "ui.add": {
+            ViewGroup parent=get(a[0],ViewGroup.class);View child=get(a[1],View.class);
+            if(parent instanceof ScrollView && parent.getChildCount()!=0)throw new IllegalArgumentException("ScrollView accepts one direct child");
+            if(parent.getContext()!=child.getContext())throw new IllegalArgumentException("Views belong to different activities");
+            parent.addView(child);return ok();
+        }
         case "ui.show": get(a[0],Activity.class).setContentView(get(a[1],View.class)); return ok();
         case "ui.setText": get(a[0],TextView.class).setText(a[1]); return ok();
         case "ui.getText": return ok(get(a[0],TextView.class).getText().toString());
         case "ui.enabled": get(a[0],View.class).setEnabled(Boolean.parseBoolean(a[1])); return ok();
-        case "ui.release": {View v=get(a[0],View.class); for(Map.Entry<String,View> e:subscriptionViews.entrySet())if(e.getValue()==v)cleanupSubscription(e.getKey()); if(v.getParent() instanceof ViewGroup) ((ViewGroup)v.getParent()).removeView(v);objects.remove(a[0]);return ok();}
+        case "ui.release": {View v=get(a[0],View.class); for(Map.Entry<String,View> e:subscriptionViews.entrySet())if(e.getValue()==v)cleanupSubscription(e.getKey()); if(v.getParent() instanceof ViewGroup) ((ViewGroup)v.getParent()).removeView(v);if(v instanceof ImageView)((ImageView)v).setImageDrawable(null);objects.remove(a[0]);return ok();}
         case "events.click": {View v=get(a[1],View.class);reserveListener(a[1],"click",a[0]);v.setOnClickListener(w->emit(a[0]));ownSubscription(a[0],v);subscriptions.put(a[0],()->v.setOnClickListener(null));return ok();}
         case "events.touch": {View v=get(a[1],View.class);reserveListener(a[1],"touch",a[0]);v.setOnTouchListener((w,e)->{emit(a[0],e.getActionMasked(),e.getX(),e.getY());return Boolean.parseBoolean(a[2]);});ownSubscription(a[0],v);subscriptions.put(a[0],()->v.setOnTouchListener(null));return ok();}
         case "events.text": {TextView v=get(a[1],TextView.class);TextWatcher t=new TextWatcher(){public void beforeTextChanged(CharSequence s,int start,int count,int after){} public void onTextChanged(CharSequence s,int start,int before,int count){emit(a[0],s.toString());}public void afterTextChanged(Editable e){}};v.addTextChangedListener(t);ownSubscription(a[0],v);subscriptions.put(a[0],()->v.removeTextChangedListener(t));return ok();}

@@ -1,0 +1,21 @@
+plugins { id 'com.android.library'; id 'maven-publish' }
+def config = rootProject.ext.androidConfig
+android {
+    namespace config.getProperty('androidNamespace')
+    compileSdk config.getProperty('compileSdk').toInteger()
+    buildToolsVersion config.getProperty('buildToolsVersion')
+    ndkVersion config.getProperty('ndkVersion')
+    defaultConfig {
+        minSdk config.getProperty('minSdk').toInteger()
+        consumerProguardFiles 'consumer-rules.pro'
+    }
+    compileOptions { sourceCompatibility JavaVersion.toVersion(config.getProperty('jdkVersion')); targetCompatibility JavaVersion.toVersion(config.getProperty('jdkVersion')) }
+    publishing { singleVariant('release') { withSourcesJar() } }
+}
+dependencies { implementation "androidx.work:work-runtime:${config.getProperty('workVersion')}" }
+// Publishing a POM preserves WorkManager's transitive dependencies.
+afterEvaluate {
+  if (providers.gradleProperty('libraryVersion').isPresent()) {
+    publishing { publications { release(MavenPublication) { from components.release; groupId = config.getProperty('androidNamespace'); artifactId = 'android-ocaml-lib'; version = providers.gradleProperty('libraryVersion').get() } } }
+  }
+}

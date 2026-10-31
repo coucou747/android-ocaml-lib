@@ -1,0 +1,2 @@
+-keep class org.ocaml.android.Bridge { *; }
+-keepclasseswithmembernames class * { native <methods>; }

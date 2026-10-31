@@ -1,0 +1,5 @@
+(library
+ (name android)
+ (public_name android-ocaml-lib)
+ (libraries lwt.unix threads)
+ (foreign_stubs (language c) (names bridge)))

@@ -1,0 +1,37 @@
+package org.ocaml.android;
+import java.nio.charset.StandardCharsets;
+import java.util.concurrent.*;
+import java.util.*;
+/** Test transport only: exercises real C/JNI and OCaml runtime on a host JVM. */
+public final class Bridge {
+    static native void nativeStart();
+    static final BlockingQueue<byte[][]> events=new LinkedBlockingQueue<>();
+    static final CountDownLatch done=new CountDownLatch(1);
+    static volatile String failure;
+    static byte[] binary=new byte[]{0,(byte)255,42,0};
+    static byte[] text(String s){return s.getBytes(StandardCharsets.UTF_8);}
+    public static byte[][] takeEvent() throws InterruptedException{return events.take();}
+    public static byte[][] dispatch(byte[] op,byte[][] args){
+        String name=new String(op,StandardCharsets.UTF_8);
+        switch(name){
+        case "storage.read":return new byte[][]{text("ok"),binary};
+        case "storage.write":
+            if(!Arrays.equals(args[1],binary))failure="Binary JNI write mismatch";
+            done.countDown();return new byte[][]{text("ok")};
+        case "activity.lifecycle":
+            events.add(new byte[][]{args[0],text("activity"),text("resumed")});
+            return new byte[][]{text("ok")};
+        case "ui.text":
+            if(!new String(args[1],StandardCharsets.UTF_8).equals("Été 🐫"))failure="Unicode JNI mismatch";
+            return new byte[][]{text("ok"),args[1]};
+        case "ui.getText":return new byte[][]{text("ok"),args[0]};
+        default:failure="Unexpected command: "+name;done.countDown();return new byte[][]{text("error"),text("platform"),text(failure)};
+        }
+    }
+    public static void main(String[] args) throws Exception{
+        System.load(args[0]);nativeStart();nativeStart();
+        boolean completed=done.await(Long.parseLong(args[1]),TimeUnit.SECONDS);
+        if(!completed || failure!=null){System.err.println(failure==null?"JNI test timed out":failure);System.exit(1);}
+        System.out.println("JNI binary, Unicode, callback and repeated-start checks passed");System.exit(0);
+    }
+}

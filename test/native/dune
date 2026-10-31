@@ -1,0 +1,5 @@
+(executable
+ (name integration)
+ (modes (native shared_object))
+ (enabled_if (= %{context_name} default.android))
+ (libraries android-ocaml-lib))

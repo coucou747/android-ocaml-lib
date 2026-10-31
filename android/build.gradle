@@ -1,0 +1,6 @@
+def config = new Properties()
+file('../config.properties').withInputStream { config.load(it) }
+ext.androidConfig = config
+allprojects {
+    layout.buildDirectory = file("${rootDir}/../_build/gradle/${project.name}")
+}

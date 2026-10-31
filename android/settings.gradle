@@ -1,0 +1,19 @@
+pluginManagement {
+    def config = new Properties()
+    file('../config.properties').withInputStream { config.load(it) }
+    repositories { google(); mavenCentral(); gradlePluginPortal() }
+    plugins {
+        id 'com.android.library' version config.getProperty('agpVersion')
+        id 'com.android.application' version config.getProperty('agpVersion')
+    }
+}
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories { google(); mavenCentral() }
+}
+rootProject.name = 'android-ocaml-lib'
+include ':library'
+if (providers.gradleProperty('testTargetSdk').isPresent()) {
+    include ':integration'
+    project(':integration').projectDir = file('../test/android')
+}

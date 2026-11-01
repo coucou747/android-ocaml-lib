@@ -282,3 +282,262 @@ la langue et le choix 12/24 heures sont relus à chaque appel ; aucun format de 
 ni fuseau d’application n’est fixé. Les dates avant 1970 sont acceptées. Ces API
 servent à l’affichage ; les règles de récurrence et leurs politiques DST restent
 la responsabilité de l’application.
+
+## Ouvrir l’activité principale après une alarme démarrée à froid
+
+`Android.Activity.launch_main ()` demande l’ouverture du point d’entrée déclaré dans
+le manifeste de l’application, sans appeler `Activity.current` ni disposer d’une
+poignée d’activité. Le contexte applicatif initialisé par le receiver, le worker ou
+l’écran d’alarme suffit. Si aucune activité d’entrée n’est déclarée, la réponse est
+`Error (Unavailable ...)`. Les erreurs Android levées sont des erreurs structurées.
+
+```ocaml
+let () =
+  match Android.Runtime.register ~name:"alarm.return_to_app" (fun _payload ->
+    Lwt.map (function
+      | Ok () -> Android.Background.Success
+      | Error _ -> Android.Background.Failure)
+      (Android.Activity.launch_main ())) with
+  | Ok () -> ()
+  | Error _ -> failwith "Handler déjà enregistré"
+```
+
+Ce handler peut être le `stop_handler` d’un `Alarm.Screen.t` ; l’application arrête
+son audio avant de demander le retour à son écran principal. La démonstration le fait
+avec `integration.stop` (sans lecture audio). Le lancement passe par le thread UI.
+Une instance principale existante est réutilisée et les activités au-dessus sont
+retirées de la pile ; sinon Android crée l’activité à partir du manifeste du client.
+Les vues ne doivent être manipulées qu’après leur callback `Activity.on_lifecycle`.
+`launch_main` ne renvoie pas une poignée créée artificiellement.
+
+`Ok ()` signifie que la demande `startActivity` a été effectuée, pas que l’interface
+est déjà créée ou visible. Android impose ses restrictions de lancement en arrière-plan
+et de verrouillage : depuis un simple receiver sans interaction utilisateur, le système
+peut bloquer ou différer l’affichage sans lever d’exception. Une notification destinée
+à ouvrir l’UI doit utiliser un PendingIntent d’activité direct, comme `Alarm.Screen.notify` ;
+un receiver de notification qui ouvre ensuite l’activité reste soumis aux restrictions
+sur les trampolines. Cette API ne contourne pas ces règles et ne déverrouille pas le téléphone.
+
+## Health Connect en lecture seule
+
+`Android.Health_connect` expose les pas, les séries de fréquence cardiaque, les
+sessions de sommeil avec leurs phases, et les résumés de séances d’exercice.
+Les distances et calories actives/totales sont accessibles par agrégation SDK.
+Les identifiants, sources de données, dates de modification et décalages de fuseau
+sont conservés. Les types/codes de phase et d’exercice restent ceux du SDK.
+Aucune écriture, suppression ou route d’exercice Health Connect n’est exposée.
+
+Commencer par `Health_connect.status ()` : `Available`, `Unavailable` ou
+`Update_required`. Le SDK prend en charge le projet API 26, mais le service Health
+Connect nécessite Android 9+ ; il est intégré au système à partir d’Android 14 et
+fourni par une application séparée sur les versions précédentes prises en charge.
+L’absence du fournisseur donne une erreur structurée, jamais des données simulées.
+
+Le client déclare seulement les permissions qu’il utilise :
+`android.permission.health.READ_STEPS`, `READ_HEART_RATE`, `READ_SLEEP`,
+`READ_EXERCISE`, `READ_DISTANCE`, `READ_ACTIVE_CALORIES_BURNED` et
+`READ_TOTAL_CALORIES_BURNED` (toutes dans le même espace `android.permission.health`).
+`read_permission` peut obtenir les noms depuis OCaml.
+`request_permissions activity [Steps; Heart_rate; Sleep; Exercise; Distance; Active_calories; Total_calories]` utilise le contrat
+de consentement du SDK, distinct de `Permissions.request`. Le résultat est le sous-ensemble
+accordé, éventuellement vide. `granted_permissions ()` relit l’état courant ; les
+opérations suivantes vérifient les droits et peuvent renvoyer `Permission_denied`.
+`open_settings activity` ouvre les réglages Health Connect lorsque le SDK est disponible.
+
+L’activité d’explication des accès et les filtres requis par les versions Android
+sont fournis dans le manifeste de la bibliothèque. Chaque client doit configurer
+ces deux métadonnées applicatives avec ses propres textes, via des ressources :
+
+```xml
+<meta-data android:name="android.ocaml.health.rationale_title"
+           android:resource="@string/health_policy_title" />
+<meta-data android:name="android.ocaml.health.rationale_text"
+           android:resource="@string/health_policy_text" />
+```
+
+Une configuration manquante est refusée avant d’ouvrir le consentement. La démo
+utilise le texte « Démonstration API » fourni pour cet exemple ; chaque application
+cliente doit décrire ses propres usages des données.
+
+Une `Health_connect.query` exige `start_ms`, `end_ms`, `page_size` et `page_token`.
+Les dates sont des millisecondes Unix 64 bits. `read_steps`, `read_heart_rate`,
+`read_sleep` et `read_exercise` lisent une page croissante selon les règles du filtre
+SDK. Réutiliser `next_page_token` tant qu’il vaut `Some token`. Les tokens sont opaques ;
+une fin de pagination vide renvoyée par le fournisseur est normalisée en `None`.
+Aucune taille de page ni période n’est choisie silencieusement.
+
+Les enregistrements bruts conservent leurs sources ; ne pas les additionner pour
+calculer un total de pas multi-sources. `aggregate_steps ~start_ms ~end_ms` utilise
+l’agrégation du SDK et sa priorité des sources. `aggregate_distance`,
+`aggregate_active_calories` et `aggregate_total_calories` suivent le même principe :
+aucune somme des enregistrements bruts. La distance est en mètres, l’énergie en
+kilocalories. `None` signifie absence de donnée ; un zéro mesuré reste `Some 0.`.
+Tous exigent un intervalle non vide `[start_ms, end_ms[`. Les limites d’historique
+et d’accès du SDK continuent de s’appliquer ; l’historique étendu n’est pas exposé.
+
+Pour les lectures programmées lorsque l’application est masquée, le client déclare
+`android.permission.health.READ_HEALTH_DATA_IN_BACKGROUND`, en plus des permissions
+de chaque type de donnée. `background_read_available ()` sonde la fonctionnalité
+SDK et retourne `Ok false` si elle manque. `background_read_granted ()` vérifie le
+droit courant : `Ok false` si refusé, `Error Unavailable` si non pris en charge.
+`request_background_read activity` ouvre explicitement le consentement du SDK :
+`Ok true` en cas d’accord, `Error Permission_denied` en cas de refus ou d’annulation,
+`Error Unavailable` si la fonctionnalité manque. Le droit est vérifié à nouveau après
+le consentement. Appeler cette demande depuis l’écran des autorisations visible ;
+aucune lecture ni tâche ne la déclenche automatiquement.
+
+## GPS et suivi écran éteint
+
+`Android.Location` utilise explicitement `Gps` ou `Network`. Le GPS demande la
+permission précise ; il n’est pas remplacé automatiquement par une position approximative.
+Sur Android 12+, demander `ACCESS_COARSE_LOCATION` et `ACCESS_FINE_LOCATION` ensemble
+avec `Permissions.request` pour permettre le choix de précision de l’utilisateur.
+Un refus, une révocation ou l’absence de matériel donnent des erreurs structurées.
+
+- `distance_between ~latitude1 ~longitude1 ~latitude2 ~longitude2` délègue le calcul
+  géodésique WGS84 à Android et renvoie des mètres, sans acquérir de position.
+  Les coordonnées doivent être finies, avec latitude dans [-90, 90] et longitude dans [-180, 180].
+- `enabled ~provider` indique si le fournisseur est activé.
+- `last_known ~provider` lit un cache optionnel, qui peut être ancien.
+- `current ~provider ~timeout_ms` acquiert une position avec le délai explicite
+  fourni. Elle peut être en cache ; consulter ses dates. `None` signifie absence
+  de position dans le délai ou résultat nul du système. Annuler la promesse Lwt
+  annule aussi la requête native et libère son écouteur.
+- `watch ~provider ~interval_ms ~min_distance_m callback` fournit les positions et
+  changements d’état du fournisseur. Arrêter avec `Subscription.cancel`.
+
+Les positions contiennent latitude, longitude, précision horizontale optionnelle,
+altitude/vitesse/cap optionnels, date Unix, date monotone en nanosecondes et indicateur
+mock. Les intervalles sont des demandes minimales, pas une garantie de fréquence Android.
+
+Pour un accès GPS démarré en arrière-plan, déclarer aussi
+`android.permission.ACCESS_BACKGROUND_LOCATION` sur Android 10+ et obtenir le
+consentement distinct de l’utilisateur. Depuis l’écran des autorisations,
+`Permissions.open_settings activity Background_location` ouvre les réglages de
+l’application ; `check_special Background_location` relit le droit courant.
+Obtenir d’abord la localisation de premier plan. Sur API 26–28, la vérification
+reflète le droit de localisation existant, sans permission distincte.
+L’ouverture des réglages n’accorde aucun droit à elle seule. Les restrictions Android
+sur le démarrage de services restent applicables.
+
+Pour continuer lorsque l’application est masquée ou l’écran éteint, enregistrer
+un handler typé et stable à chaque démarrage du processus :
+
+```ocaml
+let () =
+  ignore (Android.Location.register_background_handler ~name:"tracking.position"
+    (function
+      | Android.Location.Fix position ->
+          (* Stocker/traiter la position selon les besoins de l’application. *)
+          ignore position;
+          Lwt.return Android.Background.Success
+      | _ -> Lwt.return Android.Background.Success))
+```
+
+Appeler ensuite `start_tracking_service` pendant que l’activité est visible, avec
+le fournisseur, l’intervalle et la distance minimale choisis, le nom de handler,
+un identifiant de notification positif, un canal créé par `Notification.create_channel`,
+une icône obtenue par `Resources.resolve`, et les titre/texte de notification.
+Tous ces paramètres sont explicites. Le retour attend que le service ait installé
+sa notification et son abonnement ; une erreur de démarrage est renvoyée au client.
+`stop_tracking_service ()` retire l’abonnement, annule le handler en cours et la notification.
+La notification permet de revenir au point d’entrée du manifeste s’il existe.
+
+Le client déclare `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_LOCATION` sur les versions
+concernées, et les permissions de localisation. Le service de type `location` est déjà
+déclaré. `POST_NOTIFICATIONS` permet son affichage dans le volet de notifications sur
+Android récent ; le service reste soumis à l’affichage système des services actifs
+si cette permission est refusée. Un service commencé pendant l’utilisation de l’app
+peut conserver l’accès en écran éteint sans demander automatiquement
+`ACCESS_BACKGROUND_LOCATION`. Un démarrage depuis l’arrière-plan a des restrictions
+supplémentaires et peut exiger cette permission ; aucun contournement n’est ajouté.
+
+Il existe un seul service de suivi par application : un nouveau démarrage remplace
+sa configuration. Android peut tenter une relivraison de l’intent après destruction
+du processus ; les handlers doivent donc être enregistrés sans attendre une activité.
+Le redémarrage reste soumis au système et aux permissions actuelles, sans garantie
+après arrêt forcé. Les restrictions constructeur, d’économie d’énergie et de localisation
+restent applicables.
+
+Un handler lent conserve seulement l’événement le plus récent en attente. Il ne
+s’agit pas d’une trace GPS persistante : l’application enregistre les points dont
+elle a besoin. Un retour `Failure` ou `Retry` n’entraîne pas le rejeu d’un point.
+Aucune position ni donnée de santé n’est enregistrée sur disque ou envoyée sur le
+réseau par cette bibliothèque.
+
+La démonstration contient les contrôles d’état/consentement Health Connect et de
+permissions/cache GPS. Elle ne démarre pas un suivi avec des valeurs de fréquence
+ou de notification inventées ; le client doit choisir ces paramètres explicitement.
+
+Exemple de démarrage du suivi depuis l’UI, après obtention des droits de localisation :
+
+```ocaml
+let start_gps ~interval_ms ~min_distance_m ~notification_id
+    ~channel ~channel_name ~icon_name ~title ~text =
+  let open Lwt_result.Infix in
+  Android.Notification.create_channel ~id:channel ~name:channel_name ~importance:Low
+  >>= fun () ->
+  Android.Resources.resolve ~scope:Application ~kind:Drawable ~name:icon_name
+  >>= fun small_icon ->
+  Android.Location.start_tracking_service ~provider:Gps
+    ~interval_ms ~min_distance_m ~notification_id ~channel ~title ~text ~small_icon
+    ~handler:"tracking.position"
+```
+
+## URI d’un fichier privé
+
+`Android.Storage.file_uri ~name` construit l’URI locale du fichier portant le même
+basename que pour `Storage.read_file` et `Storage.write_file`. Le répertoire vient
+de `Context.getFilesDir()` : aucun chemin de machine n’est codé dans la bibliothèque.
+Les espaces et caractères Unicode sont échappés par `android.net.Uri.fromFile`.
+Les chemins, traversées de répertoires et caractères NUL sont refusés.
+
+Cette fonction ne crée pas le fichier et ne vérifie pas son existence. Après une
+écriture réussie, son résultat peut être passé directement à `Ui.image` ou
+`Ui.set_image_uri` pour un aperçu. L’URI est `file://` et reste destinée à l’application ;
+le partage externe nécessite un fournisseur `content://` configuré pour cet usage,
+comme celui déjà fourni pour `Camera.uri`. Les racines de FileProvider ne sont pas
+élargies à tous les fichiers privés pour ce simple accès interne.
+
+## Réglages définis par l’application
+
+`Android.Settings` génère un écran depuis une liste OCaml : sections, interrupteurs,
+textes, entiers 64 bits, choix et actions. Les valeurs sont stockées avec
+`Storage.Preferences`, dans le magasin explicitement fourni par le client.
+
+```ocaml
+let settings = Android.Settings.define ~store:"my-app-settings" [
+  Toggle {key="enabled"; title="Activer"; description=None; initial=false};
+  Integer {key="count"; title="Nombre"; description=None; initial=1L;
+    validate=Some (fun n -> if n>0L then Ok () else Error "Entier positif requis")};
+  Choice {key="mode"; title="Présentation"; description=None; initial="compact";
+    options=["compact","Compacte"; "detail","Détaillée"]};
+  Action {title="Autorisation GPS en arrière-plan"; description=None;
+    run=(fun activity -> Android.Permissions.open_settings activity Background_location)}
+]
+```
+
+Cet exemple fournit des valeurs de démonstration : chaque application choisit les
+siennes. Traiter le résultat de `define`, puis utiliser `Settings.create activity
+schema ~on_change ~on_error` et afficher `Settings.view page` avec `Ui.show`.
+Tous les types et callbacks sont documentés dans `lib/android.mli`.
+
+Les interrupteurs et choix enregistrent immédiatement ; textes et nombres ouvrent
+un dialogue avec confirmation et annulation. Un échec de validation reste affiché
+dans le champ ; un échec de stockage passe aussi par `on_error`. `on_change` reçoit
+la clé et la valeur après sauvegarde réussie uniquement. Les validateurs sont purs
+et retournent `Error message` pour une erreur attendue.
+
+`Settings.get schema ~key` retourne la valeur stockée ou la valeur initiale déclarée,
+sans écrire cette dernière. Une valeur persistée incompatible est une erreur
+explicite ; modifier le schéma ne constitue pas une migration automatique.
+`Settings.set` applique les mêmes validations. Une écriture programmatique ne
+notifie pas `on_change` ; appeler `Settings.refresh page` pour actualiser l’écran.
+Une action d’autorisation ne stocke aucun booléen représentant le droit Android.
+
+Conserver la page tant qu’elle est utilisée, puis appeler `Settings.release page`.
+La destruction de l’activité ferme aussi les dialogues et désabonne les événements.
+Recréer la page avec la nouvelle activité après rotation ; une saisie non confirmée
+est abandonnée. La démo propose un bouton « Réglages » avec tous les types de champs
+et des actions explicites de consentement santé/GPS. Aucun Java applicatif ni XML
+de préférences n’est nécessaire. Ce stockage n’est pas destiné aux secrets.

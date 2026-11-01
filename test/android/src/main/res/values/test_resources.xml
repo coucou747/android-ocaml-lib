@@ -1,3 +1,5 @@
 <resources>
     <item name="integration_alarm_icon" type="drawable">@android:drawable/ic_lock_idle_alarm</item>
+    <string name="health_rationale_title">Démonstration API</string>
+    <string name="health_rationale_text">Démonstration API</string>
 </resources>

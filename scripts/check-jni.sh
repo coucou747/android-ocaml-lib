@@ -12,8 +12,8 @@ cd "$work"
 export OCAMLRUNPARAM=b
 ocaml_dir=$(ocamlc -where)
 cc -fPIC -Wall -Wextra -D__ANDROID__ -I"$ocaml_dir" -I"$java_dir/include" -I"$java_dir/include/linux" -c "$project_dir/lib/bridge.c" -o bridge.o
-ocamlfind ocamlopt -g -thread -package lwt.unix -c android.mli
-ocamlfind ocamlopt -g -thread -package lwt.unix -linkpkg -runtime-variant _pic -output-obj android.ml smoke.ml -o runtime.o
+ocamlfind ocamlopt -g -thread -package lwt.unix,yojson -c android.mli
+ocamlfind ocamlopt -g -thread -package lwt.unix,yojson -linkpkg -runtime-variant _pic -output-obj android.ml smoke.ml -o runtime.o
 lwt_dir=$(ocamlfind query lwt.unix)
 read -r -a lwt_flags <<< "$(ocamlobjinfo "$lwt_dir/lwt_unix.cmxa" | sed -n 's/^Extra C object files: //p')"
 cc -shared runtime.o bridge.o -L"$lwt_dir" "${lwt_flags[@]}" "$ocaml_dir/libthreadsnat.a" "$ocaml_dir/libunixnat.a" "$ocaml_dir/libasmrun_pic.a" -lpthread -lm -ldl -o libsmoke.so

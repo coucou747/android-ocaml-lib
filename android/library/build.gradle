@@ -12,7 +12,13 @@ android {
     compileOptions { sourceCompatibility JavaVersion.toVersion(config.getProperty('jdkVersion')); targetCompatibility JavaVersion.toVersion(config.getProperty('jdkVersion')) }
     publishing { singleVariant('release') { withSourcesJar() } }
 }
-dependencies { implementation "androidx.core:core:${config.getProperty('coreVersion')}"; implementation "androidx.work:work-runtime:${config.getProperty('workVersion')}" }
+dependencies {
+    implementation "com.google.guava:guava:${config.getProperty('guavaVersion')}"
+
+    implementation "androidx.health.connect:connect-client:${config.getProperty('healthConnectVersion')}"
+    implementation "org.jetbrains.kotlinx:kotlinx-coroutines-core:${config.getProperty('coroutinesVersion')}"
+    implementation "org.jetbrains.kotlin:kotlin-stdlib:${config.getProperty('kotlinStdlibVersion')}"
+ implementation "androidx.core:core:${config.getProperty('coreVersion')}"; implementation "androidx.work:work-runtime:${config.getProperty('workVersion')}" }
 // Publishing a POM preserves WorkManager's transitive dependencies.
 afterEvaluate {
   if (providers.gradleProperty('libraryVersion').isPresent()) {

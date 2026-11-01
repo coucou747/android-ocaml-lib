@@ -90,7 +90,10 @@ public final class BindingInstrumentation extends Instrumentation {
         android.widget.ImageView preview=nativeView(image,android.widget.ImageView.class);
         onUi(()->{android.graphics.Bitmap bitmap=((android.graphics.drawable.BitmapDrawable)preview.getDrawable()).getBitmap();
             check(bitmap.getWidth()<=13 && bitmap.getHeight()<=13 && bitmap.getHeight()>bitmap.getWidth(),"Preview pixel bounds and EXIF orientation");return null;});
-        ok("ui.imageUri",image,uri,7,7);
+        String previewName="preview-"+java.util.UUID.randomUUID()+".jpg";
+        ok("storage.write",previewName,ok("camera.read",uri)[1]);
+        String fileUri=value("storage.fileUri",previewName);
+        ok("ui.imageUri",image,fileUri,7,7);ok("storage.remove",previewName);
         onUi(()->{android.graphics.Bitmap bitmap=((android.graphics.drawable.BitmapDrawable)preview.getDrawable()).getBitmap();check(bitmap.getWidth()<=7 && bitmap.getHeight()<=7,"Preview updated");return null;});
         check(new String(call("ui.imageUri",image,"https://unsupported.invalid/photo.jpg",7,7)[1],StandardCharsets.UTF_8).equals("argument"),"Remote image URI rejected");
         onUi(()->{check(preview.getDrawable()!=null,"Failed image replacement preserves preview");return null;});
@@ -116,6 +119,62 @@ public final class BindingInstrumentation extends Instrumentation {
             check(screen.isFinishing() || screen.isDestroyed(),"Alarm screen dismissed");
         } finally {removeMonitor(monitor);}
     }
+    private void healthLocationTests(String owner) throws Exception {
+        org.ocaml.android.HealthLocationChecks.run();
+        String health=value("health.status");
+        check(health.equals("available") || health.equals("unavailable") || health.equals("update_required"),"Health SDK availability");
+        check(value("health.permission","steps").equals("android.permission.health.READ_STEPS"),"Read-only steps permission");
+        check(value("health.permission","distance").equals("android.permission.health.READ_DISTANCE"),"Read distance permission");
+        check(value("health.permission","active_calories").equals("android.permission.health.READ_ACTIVE_CALORIES_BURNED"),"Read active energy permission");
+        check(value("health.permission","total_calories").equals("android.permission.health.READ_TOTAL_CALORIES_BURNED"),"Read total energy permission");
+        boolean background=Boolean.parseBoolean(value("health.backgroundAvailable"));
+        byte[][] backgroundGranted=call("health.backgroundGranted");
+        if(!background){
+            check(new String(backgroundGranted[1],StandardCharsets.UTF_8).equals("unavailable"),"Background feature absence explicit");
+            check(new String(call("health.backgroundRequest",owner)[1],StandardCharsets.UTF_8).equals("unavailable"),"Unsupported background consent has no UI");
+        }else check(new String(backgroundGranted[0],StandardCharsets.UTF_8).equals("ok"),"Background grant queried independently");
+        check(Math.abs(Double.parseDouble(value("location.distanceBetween","0","0","0","1"))-111319.49)<1,"Distance bridge needs no GPS permission");
+        check(ok("permissions.special","background_location").length==2,"Background GPS grant checked explicitly");
+        check(ok("health.request",owner).length==1,"Empty permission request has no UI");
+        byte[][] granted=call("health.granted");
+        if(!health.equals("available"))check(new String(granted[1],StandardCharsets.UTF_8).equals("unavailable"),"Unavailable Health SDK gives structured error");
+        else check(new String(granted[0],StandardCharsets.UTF_8).equals("ok"),"Health granted permissions queried");
+        byte[][] gps=call("location.last","gps");String result=new String(gps[0],StandardCharsets.UTF_8);
+        if(result.equals("error")){String kind=new String(gps[1],StandardCharsets.UTF_8);check(kind.equals("permission") || kind.equals("unavailable"),"GPS refusal or absence explicit");}
+        else check(gps.length==1 || gps.length==2,"GPS cache nullable");
+        byte[][] current=call("location.currentStart","gps","1");
+        if(new String(current[0],StandardCharsets.UTF_8).equals("ok")){
+            String token=new String(current[1],StandardCharsets.UTF_8);try{ok("location.currentAwait",token);}finally{ok("location.currentClose",token);}
+        }else check(new String(current[1],StandardCharsets.UTF_8).equals("permission") || new String(current[1],StandardCharsets.UTF_8).equals("unavailable"),"Current GPS guarded");
+        check(new String(call("location.serviceStart","gps","-1","0","1","none","GPS","Test","1","test")[1],StandardCharsets.UTF_8).equals("argument"),"Service rejects invalid sampling before launch");
+        ok("location.serviceStop");
+        Activity rationale=startActivitySync(new Intent(getTargetContext(),org.ocaml.android.HealthRationaleActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        check("Démonstration API".contentEquals(rationale.getTitle()),"Configured Health rationale title");
+        runOnMainSync(rationale::finish);waitForIdleSync();
+    }
+    private Activity launchMainAfterAlarm(Activity main,String owner) {
+        ActivityMonitor alarm=addMonitor("org.ocaml.android.AlarmScreenActivity",null,false);
+        ActivityMonitor launcher=null;
+        try {
+            ok("alarm.screen.show",owner,"cold-launch",42,"Cold alarm","Test","Stop","Snooze","integration.stop","integration.snooze","payload");
+            Activity alarmActivity=alarm.waitForActivity();waitForIdleSync();
+            runOnMainSync(main::finish);waitForIdleSync();
+            check(main.isDestroyed(),"Previous main activity destroyed");
+            check(new String(call("activity.current")[1],StandardCharsets.UTF_8).equals("handle"),"Alarm screen without a current BridgeActivity");
+            Intent entry=getTargetContext().getPackageManager().getLaunchIntentForPackage(getTargetContext().getPackageName());
+            check(entry!=null,"Application entry configured in manifest");
+            launcher=addMonitor(entry.getComponent().getClassName(),null,false);
+            ok("activity.launchMain");
+            Activity resumed=launcher.waitForActivity();waitForIdleSync();
+            check(resumed!=main && !resumed.isFinishing(),"Main activity created from application context");
+            String handle=value("activity.current");
+            ok("activity.launchMain");waitForIdleSync();
+            check(value("activity.current").equals(handle),"Repeated launch reuses main instance");
+            ok("alarm.screen.dismiss","cold-launch",42);waitForIdleSync();
+            check(alarmActivity.isFinishing() || alarmActivity.isDestroyed(),"Cold alarm screen dismissed");
+            return resumed;
+        } finally {removeMonitor(alarm);if(launcher!=null)removeMonitor(launcher);}
+    }
     @Override public void onStart(){
         Bundle result=new Bundle();
         Activity activity=null;
@@ -126,6 +185,17 @@ public final class BindingInstrumentation extends Instrumentation {
             check(value("ui.getText",text).equals("Été 🐫"),"Unicode text");
             byte[] binary=new byte[]{0,(byte)255,42,0};
             ok("storage.write","roundtrip.bin",binary);
+            String privateName="copie été.bin";ok("storage.write",privateName,binary);
+            Uri privateUri=Uri.parse(value("storage.fileUri",privateName));
+            check("file".equals(privateUri.getScheme()) && privateName.equals(privateUri.getLastPathSegment()),"Private file URI escaping");
+            try(java.io.InputStream in=getTargetContext().getContentResolver().openInputStream(privateUri)){
+                java.io.ByteArrayOutputStream bytes=new java.io.ByteArrayOutputStream();byte[] buffer=new byte[16];int n;
+                while((n=in.read(buffer))!=-1)bytes.write(buffer,0,n);check(Arrays.equals(bytes.toByteArray(),binary),"File URI points at Storage.write_file output");
+            }
+            ok("storage.remove",privateName);
+            String missing="absent-"+java.util.UUID.randomUUID()+".bin";
+            Uri absent=Uri.parse(value("storage.fileUri",missing));check(!new java.io.File(absent.getPath()).exists(),"URI construction does not create a file");
+            check(new String(call("storage.fileUri","../escape")[1],StandardCharsets.UTF_8).equals("argument"),"Storage URI rejects path traversal");
             check(Arrays.equals(ok("storage.read","roundtrip.bin")[1],binary),"Binary file");
             check(new String(call("storage.read","../escape")[1],StandardCharsets.UTF_8).equals("argument"),"Path traversal rejected");
             ok("preferences.set","integration","answer","int","9223372036854775807");
@@ -145,9 +215,12 @@ public final class BindingInstrumentation extends Instrumentation {
             check(Arrays.equals(ok("keystore.decrypt","integration",encrypted)[1],binary),"Keystore roundtrip");
             ok("keystore.delete","integration");ok("storage.remove","roundtrip.bin");
             ok("preferences.remove","integration","answer");
+            healthLocationTests(owner);
+            final Activity settingsOwner=activity;onUi(()->{org.ocaml.android.SettingsChecks.run(settingsOwner);return null;});
             utilityTests(owner);
             photoTests(owner);
             alarmScreenTests(owner);
+            activity=launchMainAfterAlarm(activity,owner);
             final Activity closing=activity;runOnMainSync(closing::finish);waitForIdleSync();
             check(new String(call("ui.getText",text)[1],StandardCharsets.UTF_8).equals("handle"),"Destroyed activity invalidates views");
             result.putString("stream","Platform binding tests passed\n");finish(Activity.RESULT_OK,result);

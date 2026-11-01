@@ -16,4 +16,8 @@ android {
     packaging { jniLibs { keepDebugSymbols += ['**/libintegration.so'] } }
     sourceSets.main.jniLibs.srcDirs = [new File(rootDir, '../_build/test-jni')]
 }
-dependencies { implementation project(':library') }
+dependencies {
+    implementation project(':library')
+    // The instrumented codec checks construct SDK records directly.
+    implementation "androidx.health.connect:connect-client:${config.getProperty('healthConnectVersion')}"
+}

@@ -1,8 +1,17 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <queries><package android:name="com.google.android.apps.healthdata" /></queries>
   <application>
     <activity android:name="org.ocaml.android.BridgeActivity" android:exported="false" />
     <activity android:name="org.ocaml.android.PhotoCaptureActivity" android:exported="false" android:theme="@android:style/Theme.Material.Light.NoActionBar" />
     <activity android:name="org.ocaml.android.AlarmScreenActivity" android:exported="false" android:launchMode="singleTop" android:theme="@android:style/Theme.Material.Light.NoActionBar" />
+    <activity android:name="org.ocaml.android.HealthPermissionsActivity" android:exported="false" />
+    <activity android:name="org.ocaml.android.HealthRationaleActivity" android:exported="true">
+      <intent-filter><action android:name="androidx.health.ACTION_SHOW_PERMISSIONS_RATIONALE" /></intent-filter>
+    </activity>
+    <activity-alias android:name="org.ocaml.android.HealthPermissionUsageActivity" android:exported="true" android:targetActivity="org.ocaml.android.HealthRationaleActivity" android:permission="android.permission.START_VIEW_PERMISSION_USAGE">
+      <intent-filter><action android:name="android.intent.action.VIEW_PERMISSION_USAGE" /><category android:name="android.intent.category.HEALTH_PERMISSIONS" /></intent-filter>
+    </activity-alias>
+    <service android:name="org.ocaml.android.LocationTrackingService" android:exported="false" android:foregroundServiceType="location" />
     <provider android:name="org.ocaml.android.PhotoProvider" android:authorities="${applicationId}.ocaml.photos" android:exported="false" android:grantUriPermissions="true">
       <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/ocaml_photo_paths" />
     </provider>

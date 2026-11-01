@@ -87,7 +87,7 @@ public final class Bridge {
             objects.entrySet().removeIf(e -> e.getValue()==a || (e.getValue() instanceof View && ((View)e.getValue()).getContext()==a));
         }
     }
-    private static void emit(String id,Object... values) {
+    static void emit(String id,Object... values) {
         Object[] out=new Object[values.length+1]; out[0]=id; System.arraycopy(values,0,out,1,values.length); events.add(pack(out));
     }
     public static byte[][] takeEvent() throws InterruptedException { return events.take(); }
@@ -118,6 +118,31 @@ public final class Bridge {
         String op=text(command); String[] a=new String[bytes.length];
         for(int i=0;i<a.length;i++) a[i]=text(bytes[i]);
         try {
+            if(op.equals("health.backgroundRequest")) {
+                HealthConnectSupport.requireBackgroundAvailable(context);
+                CompletableFuture<String[]> result=ui(()->HealthPermissionsActivity.requestBackground(get(a[0],Activity.class)));
+                result.get();
+                if(!HealthConnectSupport.backgroundGranted(context))throw new SecurityException("Health Connect background read permission not granted");
+                return ok(true);
+            }
+            if(op.equals("health.request")) {
+                if(a.length==1)return ok();
+                CompletableFuture<String[]> result=ui(()->HealthPermissionsActivity.request(get(a[0],Activity.class),Arrays.copyOfRange(a,1,a.length)));
+                return ok((Object[])result.get());
+            }
+            if(op.equals("health.settings"))return ui(()->{
+                HealthConnectSupport.client(context);get(a[0],Activity.class).startActivity(new Intent(androidx.health.connect.client.HealthConnectClient.getHealthConnectSettingsAction()));return ok();
+            });
+            if(op.equals("location.watch"))return ui(()->{
+                Runnable close=LocationSupport.watch(context,a[1],Long.parseLong(a[2]),Float.parseFloat(a[3]),event->emit(a[0],event.toString()));
+                subscriptions.put(a[0],close);return ok();
+            });
+            if(op.equals("location.currentStart"))return ui(()->ok(put(new LocationSupport.Current(context,a[0],Long.parseLong(a[1])))));
+            if(op.equals("location.currentClose"))return ui(()->{Object value=objects.remove(a[0]);if(value instanceof LocationSupport.Current)((LocationSupport.Current)value).close();return ok();});
+            if(op.equals("location.serviceStart")){
+                CompletableFuture<Void> ready=ui(()->LocationTrackingService.start(context,a));ready.get();return ok();
+            }
+            if(op.equals("location.serviceStop"))return ui(()->{LocationTrackingService.stop(context);return ok();});
             if(op.equals("ui.image") || op.equals("ui.imageUri")) {
                 android.graphics.Bitmap bitmap=UiSupport.image(context,a[1],Integer.parseInt(a[2]),Integer.parseInt(a[3]));
                 try{return ui(()->{
@@ -129,7 +154,7 @@ public final class Bridge {
                     view=get(a[0],ImageView.class);view.setImageBitmap(bitmap);return ok();
                 });}catch(Exception e){bitmap.recycle();throw e;}
             }
-            if(op.startsWith("ui.") || op.startsWith("events.") || op.startsWith("activity.") || op.equals("permissions.settings"))
+            if(op.startsWith("settings.") || op.startsWith("ui.") || op.startsWith("events.") || op.startsWith("activity.") || op.equals("permissions.settings"))
                 return ui(()->execute(op,a,bytes));
             if(op.equals("camera.capture")) {
                 CompletableFuture<String[]> result=ui(()->PhotoCaptureActivity.capture(get(a[0],Activity.class),a[1]));
@@ -172,7 +197,7 @@ public final class Bridge {
         return b.build();
     }
     private static File privateFile(String name) throws IOException {
-        if(name.isEmpty() || name.contains("/") || name.contains("\\") || name.equals(".") || name.equals(".."))
+        if(name.isEmpty() || name.contains("/") || name.contains("\\") || name.indexOf(0)>=0 || name.equals(".") || name.equals(".."))
             throw new IllegalArgumentException("Expected private file basename");
         return new File(context.getFilesDir(),name);
     }
@@ -183,11 +208,40 @@ public final class Bridge {
     }
     private static byte[][] execute(String op,String[] a,byte[][] raw) throws Exception {
         switch(op) {
+        case "settings.create": {
+            SettingsSupport page=new SettingsSupport(get(a[1],Activity.class),a[0],a[2]);
+            ownSubscription(a[0],page);subscriptions.put(a[0],page::close);return ok(put(page));
+        }
+        case "settings.update":get(a[0],SettingsSupport.class).update(a[1]);return ok();
+        case "settings.result":get(a[0],SettingsSupport.class).result(Integer.parseInt(a[1]),Boolean.parseBoolean(a[2]),a[3]);return ok();
+        case "health.status": {
+            int status=HealthConnectSupport.status(context);
+            return ok(status==androidx.health.connect.client.HealthConnectClient.SDK_AVAILABLE?"available":
+                status==androidx.health.connect.client.HealthConnectClient.SDK_UNAVAILABLE_PROVIDER_UPDATE_REQUIRED?"update_required":"unavailable");
+        }
+        case "health.permission": return ok(HealthConnectSupport.permission(a[0]));
+        case "health.granted": return ok((Object[])HealthConnectSupport.granted(context));
+        case "health.read": return ok(HealthConnectSupport.read(context,a));
+        case "health.backgroundAvailable":return ok(HealthConnectSupport.backgroundAvailable(context));
+        case "health.backgroundGranted":return ok(HealthConnectSupport.backgroundGranted(context));
+        case "health.aggregateAmount":{String value=HealthConnectSupport.aggregateAmount(context,a[0],a[1],a[2]);return value==null?ok():ok(value);}
+        case "location.distanceBetween":return ok(LocationSupport.distanceBetween(Double.parseDouble(a[0]),Double.parseDouble(a[1]),Double.parseDouble(a[2]),Double.parseDouble(a[3])));
+        case "health.aggregateSteps": {String value=HealthConnectSupport.aggregateSteps(context,a[0],a[1]);return value==null?ok():ok(value);}
+        case "location.enabled": return ok(LocationSupport.enabled(context,a[0]));
+        case "location.last": {String value=LocationSupport.last(context,a[0]);return value==null?ok():ok(value);}
+        case "location.currentAwait": {String value=get(a[0],LocationSupport.Current.class).result.get();return value==null?ok():ok(value);}
+        case "location.event": return ok(LocationTrackingService.event(a[0]));
         case "camera.open": return ok(PhotoCaptureActivity.open(context,a[0]));
         case "camera.read": return ok(PhotoCaptureActivity.read(context,a[0]));
         case "camera.delete": PhotoCaptureActivity.delete(context,a[0]);return ok();
         case "runtime.complete": { CompletableFuture<String> f=pending.remove(a[0]); if(f!=null) f.complete(a[1]); return ok(); }
         case "unsubscribe": { ui(()->{cleanupSubscription(a[0]);return null;}); lifecycle.remove(a[0]); return ok(); }
+        case "activity.launchMain": {
+            Intent launch=context.getPackageManager().getLaunchIntentForPackage(context.getPackageName());
+            if(launch==null)throw new UnsupportedOperationException("Application has no manifest entry activity");
+            launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_CLEAR_TOP|Intent.FLAG_ACTIVITY_SINGLE_TOP);
+            context.startActivity(launch);return ok();
+        }
         case "activity.current": if(current==null) throw new NoSuchElementException("No current activity"); return ok(current.bridgeId);
         case "activity.displaySize": {
             Activity activity=get(a[0],Activity.class);
@@ -237,6 +291,9 @@ public final class Bridge {
         case "events.text": {TextView v=get(a[1],TextView.class);TextWatcher t=new TextWatcher(){public void beforeTextChanged(CharSequence s,int start,int count,int after){} public void onTextChanged(CharSequence s,int start,int before,int count){emit(a[0],s.toString());}public void afterTextChanged(Editable e){}};v.addTextChangedListener(t);ownSubscription(a[0],v);subscriptions.put(a[0],()->v.removeTextChangedListener(t));return ok();}
         case "permissions.check": return ok(context.checkSelfPermission(a[0])==PackageManager.PERMISSION_GRANTED);
         case "permissions.special": {
+            if(a[0].equals("background_location"))return ok(Build.VERSION.SDK_INT>=29
+                ?context.checkSelfPermission(android.Manifest.permission.ACCESS_BACKGROUND_LOCATION)==PackageManager.PERMISSION_GRANTED
+                :context.checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION)==PackageManager.PERMISSION_GRANTED || context.checkSelfPermission(android.Manifest.permission.ACCESS_COARSE_LOCATION)==PackageManager.PERMISSION_GRANTED);
             if(a[0].equals("exact")) return ok(Build.VERSION.SDK_INT<31 || context.getSystemService(AlarmManager.class).canScheduleExactAlarms());
             if(a[0].equals("fullscreen")) return ok(Build.VERSION.SDK_INT<34 || context.getSystemService(NotificationManager.class).canUseFullScreenIntent());
             return ok(context.getSystemService(NotificationManager.class).areNotificationsEnabled()); }
@@ -244,6 +301,7 @@ public final class Bridge {
             Activity act=get(a[0],Activity.class);String action;
             if(a[1].equals("exact")){if(Build.VERSION.SDK_INT<31)return ok();action=Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM;}
             else if(a[1].equals("fullscreen")){if(Build.VERSION.SDK_INT<34)return ok();action=Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT;}
+            else if(a[1].equals("background_location"))action=Settings.ACTION_APPLICATION_DETAILS_SETTINGS;
             else {act.startActivity(new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE,context.getPackageName()));return ok();}
             act.startActivity(new Intent(action,Uri.parse("package:"+context.getPackageName())));return ok(); }
         case "alarm.allowed": return ok(Build.VERSION.SDK_INT<31 || context.getSystemService(AlarmManager.class).canScheduleExactAlarms());
@@ -267,6 +325,7 @@ public final class Bridge {
         case "http.create": return ok(put(new HttpCall()));
         case "http.close": {Object value=objects.remove(a[0]);if(value instanceof HttpCall)((HttpCall)value).close();return ok();}
         case "http.request": return http(a,raw);
+        case "storage.fileUri": return ok(Uri.fromFile(privateFile(a[0])).toString());
         case "storage.read": return ok(java.nio.file.Files.readAllBytes(privateFile(a[0]).toPath()));
         case "storage.write": {android.util.AtomicFile file=new android.util.AtomicFile(privateFile(a[0]));FileOutputStream stream=file.startWrite();try{stream.write(raw[1]);file.finishWrite(stream);}catch(Exception e){file.failWrite(stream);throw e;}return ok();}
         case "storage.remove": java.nio.file.Files.deleteIfExists(privateFile(a[0]).toPath());return ok();

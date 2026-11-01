@@ -17,6 +17,13 @@ module Activity : sig
   (** Current window dimensions in physical pixels, suitable for image bounds. *)
   val display_size : t -> size response
   val current : unit -> t response
+  (** Request the application's manifest entry activity using the application
+      context, including when no [t] exists (for example a cold alarm handler).
+      Reuses an existing main instance and clears activities above it.
+      No entry activity yields [Error.Unavailable]. [Ok ()] acknowledges the
+      request, not visibility: Android's background/lock-screen restrictions
+      still apply. Observe [on_lifecycle] before interacting with the new UI. *)
+  val launch_main : unit -> unit response
   val set_keep_screen_on : t -> bool -> unit response
   val on_lifecycle : (t -> event -> unit Lwt.t) -> Subscription.t response
 end
@@ -74,10 +81,12 @@ module Events : sig
   val on_touch : Ui.view -> consume:bool -> (touch -> unit Lwt.t) -> Subscription.t response
 end
 module Permissions : sig
-  type special = Exact_alarm | Notifications | Full_screen_intent
+  type special = Exact_alarm | Notifications | Full_screen_intent | Background_location
   val check : string -> bool response
   val request : Activity.t -> string list -> string list response
   val check_special : special -> bool response
+  (** [Background_location] opens the app permission settings; consent remains an
+      explicit user action. Check foreground permissions separately. *)
   val open_settings : Activity.t -> special -> unit response
 end
 module Camera : sig
@@ -153,6 +162,10 @@ module Network : sig
   end
 end
 module Storage : sig
+  (** Local [file://] URI of the same private basename used by read/write_file.
+      Escapes Unicode and spaces. Does not create the file or require its existence.
+      Suitable for Ui.image; external sharing requires a content URI provider. *)
+  val file_uri : name:string -> string response
   val read_file : name:string -> string response
   val write_file : name:string -> contents:string -> unit response
   val remove_file : name:string -> unit response
@@ -190,4 +203,113 @@ module Runtime : sig
   val register : name:string -> handler -> (unit, Error.t) result
   val set_entry : (unit -> unit Lwt.t) -> unit
   val set_error_handler : (exn -> unit) -> unit
+end
+
+
+module Health_connect : sig
+  type availability = Available | Unavailable | Update_required
+  type record_type = Steps | Heart_rate | Sleep | Exercise | Distance | Active_calories | Total_calories
+  type interval = { start_ms : int64; end_ms : int64; start_offset_s : int option; end_offset_s : int option }
+  type metadata = { id : string; origin : string; last_modified_ms : int64 }
+  type steps = { metadata : metadata; interval : interval; count : int64 }
+  type sample = { at_ms : int64; bpm : int64 }
+  type heart_rate = { metadata : metadata; interval : interval; samples : sample list }
+  (** [stage_type] and [exercise_type] retain the Health Connect integer codes,
+      including unknown values added by newer platform versions. *)
+  type stage = { start_ms : int64; end_ms : int64; stage_type : int }
+  type sleep = { metadata : metadata; interval : interval; title : string option; notes : string option; stages : stage list }
+  (** Session summary only; routes, laps and segments are not exposed. *)
+  type exercise = { metadata : metadata; interval : interval; exercise_type : int; title : string option; notes : string option }
+  type query = { start_ms : int64; end_ms : int64; page_size : int; page_token : string option }
+  type 'a page = { records : 'a list; next_page_token : string option }
+  val status : unit -> availability response
+  val read_permission : record_type -> string response
+  val granted_permissions : unit -> record_type list response
+  (** Dedicated Health Connect consent UI, with only the requested READ permissions.
+      The application supplies rationale text resources in its manifest. *)
+  val request_permissions : Activity.t -> record_type list -> record_type list response
+  (** Feature probe: [Ok false] when the SDK or background-read feature is absent. *)
+  val background_read_available : unit -> bool response
+  (** [Ok false] if denied; [Error Unavailable] when unsupported. *)
+  val background_read_granted : unit -> bool response
+  (** Explicit SDK consent. Refusal is [Error Permission_denied]; an absent feature
+      is [Error Unavailable]. Success is [Ok true]. Requires manifest permission
+      android.permission.health.READ_HEALTH_DATA_IN_BACKGROUND. *)
+  val request_background_read : Activity.t -> bool response
+  val open_settings : Activity.t -> unit response
+  (** Read one SDK page, chronologically ascending, without merging data origins.
+      Times are Unix milliseconds. The SDK applies its permission/history limits. *)
+  val read_steps : query -> steps page response
+  val read_heart_rate : query -> heart_rate page response
+  val read_sleep : query -> sleep page response
+  val read_exercise : query -> exercise page response
+  (** SDK aggregation, with its source-priority rules, rather than summing raw records. *)
+  val aggregate_steps : start_ms:int64 -> end_ms:int64 -> int64 option response
+  (** SDK aggregates with source priorities. [None] means no data; an actual zero
+      remains [Some 0.]. Distance is in metres, energy in kilocalories. *)
+  val aggregate_distance : start_ms:int64 -> end_ms:int64 -> float option response
+  val aggregate_active_calories : start_ms:int64 -> end_ms:int64 -> float option response
+  val aggregate_total_calories : start_ms:int64 -> end_ms:int64 -> float option response
+end
+
+module Location : sig
+  type provider = Gps | Network
+  type fix = { provider : string option; latitude : float; longitude : float;
+    accuracy_m : float option; altitude_m : float option; speed_mps : float option; bearing_deg : float option;
+    at_ms : int64; elapsed_realtime_ns : int64; is_mock : bool }
+  type event = Fix of fix | Provider_enabled of string | Provider_disabled of string
+  (** Android WGS84 geodesic distance in metres. No position acquisition or permission
+      required. Coordinates must be finite and within latitude/longitude bounds. *)
+  val distance_between : latitude1:float -> longitude1:float -> latitude2:float -> longitude2:float -> float response
+  val enabled : provider:provider -> bool response
+  (** A cached fix may be stale; inspect its timestamps. *)
+  val last_known : provider:provider -> fix option response
+  (** One fix via LocationManagerCompat, possibly cached; [None] on timeout or
+      no fix. Cancelling the Lwt promise cancels the underlying request. *)
+  val current : provider:provider -> timeout_ms:int -> fix option response
+  (** Process-local updates, stopped with Subscription.cancel. No provider fallback.
+      Actual delivery frequency is controlled by Android; interval is a minimum. *)
+  val watch : provider:provider -> interval_ms:int64 -> min_distance_m:float -> (event -> unit Lwt.t) -> Subscription.t response
+  (** Register this stable name at every process start, before returning from entry.
+      A slow handler coalesces intermediate events to the most recent event.
+      Failure/Retry acknowledges an unsuccessful delivery; it does not replay a fix. *)
+  val register_background_handler : name:string -> (event -> Background.outcome Lwt.t) -> (unit, Error.t) result
+  (** Start while the application is visible. The location foreground service keeps
+      updates while the screen is off; it requires the client's manifest permissions,
+      a notification channel and icon. One service per app; a new start replaces it.
+      OS restart is attempted via redelivery, subject to current permissions. *)
+  val start_tracking_service : provider:provider -> interval_ms:int64 -> min_distance_m:float -> notification_id:int -> channel:string -> title:string -> text:string -> small_icon:int -> handler:string -> unit response
+  val stop_tracking_service : unit -> unit response
+end
+
+(** Application-defined settings, persisted in Storage.Preferences. No permissions
+    are requested implicitly. Recreate pages after activity recreation. *)
+module Settings : sig
+  type item =
+    | Section of string
+    | Toggle of { key:string; title:string; description:string option; initial:bool }
+    | Text of { key:string; title:string; description:string option; initial:string;
+                multiline:bool; validate:(string -> (unit,string) result) option }
+    | Integer of { key:string; title:string; description:string option; initial:int64;
+                   validate:(int64 -> (unit,string) result) option }
+    | Choice of { key:string; title:string; description:string option; initial:string;
+                  options:(string * string) list }
+    | Action of { title:string; description:string option; run:Activity.t -> unit response }
+  type schema
+  type page
+  val define : store:string -> item list -> (schema, Error.t) result
+  (** Missing keys return their declared initial value, without writing it.
+      Invalid stored values are errors, never silently reset. *)
+  val get : schema -> key:string -> Storage.Preferences.value response
+  val set : schema -> key:string -> Storage.Preferences.value -> unit response
+  (** Each field commits independently. on_change runs only after a successful UI
+      write. Programmatic set requires refresh and does not invoke on_change.
+      Validators are pure and should not raise; exceptions become Platform errors. *)
+  val create : Activity.t -> schema ->
+    on_change:(key:string -> Storage.Preferences.value -> unit Lwt.t) ->
+    on_error:(Error.t -> unit Lwt.t) -> page response
+  val view : page -> Ui.view
+  val refresh : page -> unit response
+  (** Idempotent. Dismisses dialogs, cancels listeners and releases the root view. *)
+  val release : page -> unit response
 end

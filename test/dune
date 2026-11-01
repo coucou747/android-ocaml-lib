@@ -1,3 +1,9 @@
 (test
  (name test_android)
+ (modules test_android)
+ (libraries android-ocaml-lib lwt.unix))
+
+(test
+ (name test_settings)
+ (modules test_settings)
  (libraries android-ocaml-lib lwt.unix))

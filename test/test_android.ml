@@ -20,6 +20,22 @@ let () =
        stop_handler="stop"; snooze_handler="snooze"; payload=""}) >>= fun () ->
     expect_invalid "qualified resource name" (Android.Resources.resolve ~scope:Android ~kind:Drawable ~name:"android:drawable/icon") >>= fun () ->
     expect_invalid "missing resource name" (Android.Resources.resolve ~scope:Application ~kind:Mipmap ~name:"") >>= fun () ->
+    expect_invalid "invalid health interval" (Android.Health_connect.read_steps {start_ms=2L;end_ms=1L;page_size=1;page_token=None}) >>= fun () ->
+    expect_invalid "invalid health page" (Android.Health_connect.read_sleep {start_ms=1L;end_ms=2L;page_size=0;page_token=None}) >>= fun () ->
+    expect_invalid "invalid aggregate interval" (Android.Health_connect.aggregate_steps ~start_ms:2L ~end_ms:1L) >>= fun () ->
+    Lwt_list.iter_s (fun aggregate -> expect_invalid "invalid scalar aggregate interval" (aggregate ~start_ms:2L ~end_ms:1L))
+      [Android.Health_connect.aggregate_distance;Android.Health_connect.aggregate_active_calories;Android.Health_connect.aggregate_total_calories] >>= fun () ->
+    Lwt_list.iter_s (fun (latitude1,longitude1,latitude2,longitude2) ->
+      expect_invalid "invalid geodesic coordinates" (Android.Location.distance_between ~latitude1 ~longitude1 ~latitude2 ~longitude2))
+      [nan,0.,0.,0.;0.,infinity,0.,0.;91.,0.,0.,0.;0.,0.,0.,181.] >>= fun () ->
+    expect_invalid "GPS timeout" (Android.Location.current ~provider:Gps ~timeout_ms:0) >>= fun () ->
+    expect_invalid "GPS negative sampling" (Android.Location.watch ~provider:Gps ~interval_ms:(-1L) ~min_distance_m:0. (fun _ -> Lwt.return_unit)) >>= fun () ->
+    expect_invalid "GPS nonfinite distance" (Android.Location.watch ~provider:Gps ~interval_ms:1L ~min_distance_m:nan (fun _ -> Lwt.return_unit)) >>= fun () ->
+    expect_invalid "storage URI path traversal" (Android.Storage.file_uri ~name:"../outside") >>= fun () ->
+    expect_invalid "storage URI NUL" (Android.Storage.file_uri ~name:"bad\000name") >>= fun () ->
+    Android.Activity.launch_main () >>= (function
+      | Error (Android.Error.Unavailable _) -> Lwt.return_unit
+      | _ -> Lwt.fail_with "Host launch must report Android unavailable") >>= fun () ->
     Android.Storage.read_file ~name:"host-check" >|= function
     | Error (Android.Error.Unavailable _) -> ()
     | _ -> failwith "Host must report Android unavailable");

@@ -29,10 +29,59 @@ let local_status () =
   Android.Audio.default_alarm_uri () >>= require >>= fun sound ->
   Android.Resources.resolve ~scope:Application ~kind:Drawable ~name:"integration_alarm_icon" >>= require >>= fun icon ->
   status (Printf.sprintf "%s (%s)\nIcône : %d\nSon : %s" date zone icon (Option.value sound ~default:"aucun"))
+let health_status () =
+  Android.Health_connect.status () >>= require >>= fun availability ->
+  match availability with
+  | Unavailable -> status "Health Connect indisponible sur cet appareil"
+  | Update_required -> status "Health Connect doit être installé ou mis à jour"
+  | Available -> Android.Health_connect.granted_permissions () >>= require >>= fun granted ->
+    status (Printf.sprintf "Health Connect : %d types autorisés" (List.length granted))
+let health_permissions activity () =
+  Android.Health_connect.status () >>= require >>= function
+  | Available -> Android.Health_connect.request_permissions activity [Steps;Heart_rate;Sleep;Exercise;Distance;Active_calories;Total_calories] >>= require >>= fun granted ->
+    status (Printf.sprintf "Health Connect : %d types autorisés en lecture" (List.length granted))
+  | _ -> health_status ()
+let health_background_permissions activity () =
+  Android.Health_connect.background_read_available () >>= require >>= function
+  | false -> status "Lecture santé en arrière-plan indisponible"
+  | true -> Android.Health_connect.request_background_read activity >>= function
+    | Ok true -> status "Lecture santé en arrière-plan autorisée"
+    | Error (Android.Error.Permission_denied _) -> status "Lecture santé en arrière-plan refusée"
+    | Error (Android.Error.Unavailable _) -> status "Lecture santé en arrière-plan indisponible"
+    | _ -> status "Erreur de consentement santé en arrière-plan"
+let gps_background_permissions activity () =
+  Android.Permissions.check "android.permission.ACCESS_FINE_LOCATION" >>= require >>= function
+  | false -> status "Autoriser d’abord la localisation précise"
+  | true -> Android.Permissions.open_settings activity Background_location >>= require
+let gps_status activity () =
+  Android.Permissions.request activity ["android.permission.ACCESS_COARSE_LOCATION";"android.permission.ACCESS_FINE_LOCATION"] >>= require >>= fun granted ->
+  if not (List.mem "android.permission.ACCESS_FINE_LOCATION" granted) then status "Localisation précise non autorisée" else
+  Android.Location.enabled ~provider:Gps >>= require >>= fun enabled ->
+  Android.Location.last_known ~provider:Gps >>= function
+  | Ok (Some fix) -> status (Printf.sprintf "GPS : %.6f, %.6f (position en cache)" fix.latitude fix.longitude)
+  | Ok None -> status (if enabled then "GPS actif, aucune position en cache" else "GPS désactivé")
+  | Error (Android.Error.Permission_denied _) -> status "Localisation précise non autorisée"
+  | Error (Android.Error.Unavailable _) -> status "GPS indisponible"
+  | Error _ -> status "Erreur de localisation"
 let alarm activity () =
   Android.Alarm.Screen.show activity {id="integration";notification_id=41;
     title="Alarme de test";text="Écran réutilisable";stop_label="Arrêter";snooze_label="Reporter";
     stop_handler="integration.stop";snooze_handler="integration.snooze";payload="integration"} >>= require
+let main_root = ref None
+let settings_page = ref None
+let settings_schema = match Android.Settings.define ~store:"integration-settings" [
+  Section "Démonstration des réglages";
+  Toggle {key="enabled";title="Activer la démonstration";description=None;initial=false};
+  Text {key="description";title="Description";description=None;initial="Démonstration API";multiline=true;validate=None};
+  Integer {key="count";title="Nombre de tâches";description=None;initial=1L;
+    validate=Some (fun n -> if n>0L then Ok () else Error "Un entier positif est requis")};
+  Choice {key="display";title="Présentation";description=None;initial="compact";options=["compact","Compacte";"detail","Détaillée"]};
+  Action {title="Autorisation santé en arrière-plan";description=None;run=(fun activity -> health_background_permissions activity () >|= fun () -> Ok ())};
+  Action {title="Autorisation GPS en arrière-plan";description=None;run=(fun activity -> gps_background_permissions activity () >|= fun () -> Ok ())};
+  Action {title="Retour à la démonstration";description=None;run=(fun activity -> match !main_root with
+    | Some root -> Android.Ui.show activity root
+    | None -> Lwt.return (Error (Android.Error.Invalid_handle "No demo page")))}]
+  with Ok schema -> schema | Error _ -> failwith "Invalid demo settings"
 let render activity =
   Android.Ui.scroll_view activity >>= require >>= fun scroll ->
   Android.Ui.linear_layout activity Android.Ui.Vertical >>= require >>= fun layout ->
@@ -53,21 +102,37 @@ let render activity =
     Android.Ui.button activity label >>= require >>= fun button ->
     Android.Ui.add layout button >>= require >>= fun () ->
     Android.Events.on_click button callback >>= require >|= fun _ -> ())
-    ["Prendre une photo",capture activity; "Écran d’alarme",alarm activity; "Date, son et ressource",local_status] >>= fun () ->
+    ["Prendre une photo",capture activity; "Écran d’alarme",alarm activity; "Date, son et ressource",local_status;
+     "Health Connect : état",health_status; "Health Connect : autorisations",health_permissions activity;
+     "Health Connect : accès en arrière-plan",health_background_permissions activity;
+     "GPS : autorisation en arrière-plan",gps_background_permissions activity;
+     "GPS : autorisations et cache",gps_status activity; "Arrêter le suivi GPS",(fun () -> Android.Location.stop_tracking_service () >>= require)] >>= fun () ->
+  (match !settings_page with None -> Lwt.return_unit | Some page -> Android.Settings.release page >|= ignore) >>= fun () ->
+  Android.Settings.create activity settings_schema
+    ~on_change:(fun ~key _ -> status ("Réglage enregistré : "^key))
+    ~on_error:(fun _ -> status "Erreur de réglage") >>= require >>= fun settings ->
+  settings_page := Some settings;
+  Android.Ui.button activity "Réglages" >>= require >>= fun settings_button ->
+  Android.Ui.add layout settings_button >>= require >>= fun () ->
+  Android.Events.on_click settings_button (fun () -> Android.Ui.show activity (Android.Settings.view settings) >>= require) >>= require >>= fun _ ->
   Android.Ui.add layout preview_slot >>= require >>= fun () ->
   (* Rows and their count are fixture data, not a library configuration. *)
   Lwt_list.iter_s (fun n -> Android.Ui.text activity (Printf.sprintf "Tâche de démonstration %d" n) >>= require >>= fun row ->
     Android.Ui.add layout row >>= require) (List.init 30 ((+) 1)) >>= fun () ->
-  preview_photo () >>= fun () -> Android.Ui.show activity scroll >>= require
+  main_root := Some scroll;preview_photo () >>= fun () -> Android.Ui.show activity scroll >>= require
 let () =
-  List.iter (fun (name,text) ->
-    match Android.Runtime.register ~name (fun _ -> status text >|= fun () -> Android.Background.Success) with
-    | Ok () -> () | Error _ -> failwith "Duplicate integration handler")
-    ["integration.stop","Alarme arrêtée";"integration.snooze","Report demandé"];
+  let register name handler = match Android.Runtime.register ~name handler with
+    | Ok () -> () | Error _ -> failwith "Duplicate integration handler" in
+  register "integration.stop" (fun _ ->
+    Android.Activity.launch_main () >>= require >>= fun () ->
+    status "Alarme arrêtée" >|= fun () -> Android.Background.Success);
+  register "integration.snooze" (fun _ -> status "Report demandé" >|= fun () -> Android.Background.Success);
   Android.Runtime.set_entry (fun () ->
     Android.Activity.on_lifecycle (fun activity event ->
       match event,!screen with
-      | Destroyed,Some ui when ui.activity = activity -> screen := None; Lwt.return_unit
-      | Resumed,Some ui when ui.activity = activity -> Lwt.return_unit
+      | Destroyed,Some ui when ui.activity = activity -> screen := None;
+        (match !settings_page with None -> Lwt.return_unit | Some page -> settings_page:=None;Android.Settings.release page >|= ignore)
+      | Resumed,Some ui when ui.activity = activity ->
+        (match !settings_page with None -> Lwt.return_unit | Some page -> Android.Settings.refresh page >|= ignore)
       | Resumed,_ -> render activity
       | _ -> Lwt.return_unit) >>= require >|= fun _ -> ())

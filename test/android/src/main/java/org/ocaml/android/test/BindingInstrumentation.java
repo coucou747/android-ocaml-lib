@@ -119,6 +119,24 @@ public final class BindingInstrumentation extends Instrumentation {
             check(screen.isFinishing() || screen.isDestroyed(),"Alarm screen dismissed");
         } finally {removeMonitor(monitor);}
     }
+    private void authenticationTests() throws Exception {
+        org.ocaml.android.AuthenticationChecks.run(getTargetContext());
+        String name="auth-"+java.util.UUID.randomUUID(),alias=name+"-key";
+        try{
+            ok("auth.keyEnsure",alias);ok("auth.keyEnsure",alias);
+            check(ok("auth.secretRead",name).length==1,"Missing token is absent");
+            String ciphertext=value("keystore.encrypt",alias,"fixture-session-token");
+            check(!ciphertext.contains("fixture-session-token"),"Token encrypted with Keystore");
+            ok("auth.secretWrite",name,ciphertext);
+            check(value("auth.secretRead",name).equals(ciphertext),"Atomic ciphertext roundtrip");
+            check(new java.io.File(getTargetContext().getNoBackupFilesDir(),name).isFile(),"Session excluded from backup directory");
+            check(value("keystore.decrypt",alias,ciphertext).equals("fixture-session-token"),"Keystore decrypt roundtrip");
+            ok("auth.secretDelete",name);ok("auth.secretDelete",name);
+            check(ok("auth.secretRead",name).length==1,"Logout removes session");
+            ok("auth.secretWrite",name,"corrupt-ciphertext");
+            check(new String(call("keystore.decrypt",alias,"corrupt-ciphertext")[0],StandardCharsets.UTF_8).equals("error"),"Corrupt ciphertext is an error");
+        }finally{ok("auth.secretDelete",name);ok("keystore.delete",alias);}
+    }
     private void healthLocationTests(String owner) throws Exception {
         org.ocaml.android.HealthLocationChecks.run();
         String health=value("health.status");
@@ -215,6 +233,7 @@ public final class BindingInstrumentation extends Instrumentation {
             check(Arrays.equals(ok("keystore.decrypt","integration",encrypted)[1],binary),"Keystore roundtrip");
             ok("keystore.delete","integration");ok("storage.remove","roundtrip.bin");
             ok("preferences.remove","integration","answer");
+            authenticationTests();
             healthLocationTests(owner);
             final Activity settingsOwner=activity;onUi(()->{org.ocaml.android.SettingsChecks.run(settingsOwner);return null;});
             utilityTests(owner);

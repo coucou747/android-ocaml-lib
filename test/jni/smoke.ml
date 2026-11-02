@@ -148,5 +148,6 @@ let () = Android.Runtime.set_entry (fun () ->
     let rec opened () = Android.Storage.Preferences.get ~store:"native-launch" ~key:"complete" >>= require >>= function
       | Some (Bool true) -> Lwt.return_unit | _ -> Lwt.pause () >>= opened in
     opened () >>= fun () ->
+    Auth_smoke.run activity >>= fun () ->
     Gc.full_major ();
     Android.Storage.write_file ~name:"done" ~contents:binary >>= require) >>= require >|= fun _ -> ())

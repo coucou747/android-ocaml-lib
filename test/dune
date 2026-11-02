@@ -7,3 +7,8 @@
  (name test_settings)
  (modules test_settings)
  (libraries android-ocaml-lib lwt.unix))
+
+(test
+ (name test_authentication)
+ (modules test_authentication)
+ (libraries android-ocaml-lib lwt.unix))

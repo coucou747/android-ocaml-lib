@@ -628,3 +628,165 @@ module Settings = struct
   let open_ activity = unit_call "settings.open" [activity]
 
 end
+
+module Authentication = struct
+  type error = Android of Error.t | Cancelled | No_credential | Unsupported
+    | Provider_error of string | Invalid_argument of string
+    | Invalid_response of string | Http_status of int | Not_authenticated
+  type 'a response = ('a, error) result Lwt.t
+  let ( let* ) task f = task >>= function Ok v -> f v | Error e -> Lwt.return (Error e)
+  let platform task = task >|= Result.map_error (fun e -> Android e)
+  let reject message = Lwt.return (Error (Invalid_argument message))
+  let json text = try Ok (Yojson.Safe.from_string text) with Yojson.Json_error _ -> Error (Invalid_response "Invalid JSON response")
+  let object_json text = match json text with Ok (`Assoc _ as j) -> Ok j | _ -> Error (Invalid_argument "Expected a JSON object")
+  let passkey operation activity options_json =
+    match object_json options_json with Error e -> Lwt.return (Error e) | Ok _ ->
+    let* token=Lwt.no_cancel (platform (one "auth.passkeyStart" [activity;operation;options_json])) in
+    Lwt.finalize (fun () -> platform (call "auth.passkeyAwait" [token]) >|= function
+      | Error e -> Error e
+      | Ok [|"complete";value|] -> (match object_json value with Ok _ -> Ok value | Error _ -> Error (Invalid_response "Invalid passkey response"))
+      | Ok [|"cancelled"|] -> Error Cancelled | Ok [|"none"|] -> Error No_credential
+      | Ok [|"unsupported"|] -> Error Unsupported | Ok [|"provider";kind|] -> Error (Provider_error kind)
+      | Ok _ -> Error (Invalid_response "Invalid credential result"))
+      (fun () -> unit_call "auth.passkeyClose" [token] >|= ignore)
+  let create_passkey activity ~options_json = passkey "create" activity options_json
+  let get_passkey activity ~options_json = passkey "get" activity options_json
+  let clear_credential_state () = platform (call "auth.clearState" []) >|= function
+    | Error e -> Error e | Ok [||] -> Ok () | Ok [|"unsupported"|] -> Error Unsupported
+    | Ok [|"provider";kind|] -> Error (Provider_error kind)
+    | Ok _ -> Error (Invalid_response "Invalid credential state result")
+  type app_identity = { package_name:string; sha256_cert_fingerprints:string list; origins:string list }
+  let app_identity () =
+    let* raw=platform (one "auth.identity" []) in
+    try let open Yojson.Safe.Util in let j=Yojson.Safe.from_string raw in
+      Lwt.return (Ok {package_name=j |> member "package_name" |> to_string;
+        sha256_cert_fingerprints=j |> member "sha256_cert_fingerprints" |> to_list |> List.map to_string;
+        origins=j |> member "origins" |> to_list |> List.map to_string})
+    with Yojson.Json_error _ | Yojson.Safe.Util.Type_error _ -> Lwt.return (Error (Invalid_response "Invalid application identity"))
+  type session = { access_token:string; expires_at_ms:int64 }
+  let now_ms () = Int64.of_float (Unix.gettimeofday () *. 1000.)
+  let valid_token token =
+    let char = function 'A'..'Z' | 'a'..'z' | '0'..'9' | '-' | '.' | '_' | '~' | '+' | '/' -> true | _ -> false in
+    let rec loop i padding = i=String.length token || (if token.[i]='=' then loop (i+1) true else not padding && char token.[i] && loop (i+1) false) in
+    token<>"" && token.[0]<>'=' && loop 0 false
+  module Token_store = struct
+    type t = {name:string;key_alias:string;lock:Lwt_mutex.t}
+    let create ~name ~key_alias =
+      if name="" || name="." || name=".." || String.exists (function '/' | '\\' | '\000' -> true | _ -> false) name || key_alias=""
+      then Error (Invalid_argument "Expected private token basename and explicit key alias")
+      else Ok {name;key_alias;lock=Lwt_mutex.create ()}
+    let delete_unlocked t = platform (unit_call "auth.secretDelete" [t.name])
+    let load_unlocked t =
+      let* encrypted=platform (call "auth.secretRead" [t.name]) in
+      match encrypted with
+      | [||] -> Lwt.return (Ok None)
+      | [|ciphertext|] ->
+        let* plaintext=platform (Storage.Keystore.decrypt ~alias:t.key_alias ~ciphertext) in
+        (try let open Yojson.Safe.Util in let j=Yojson.Safe.from_string plaintext in
+          let access_token=j |> member "access_token" |> to_string
+          and expiry=j |> member "expires_at_ms" |> to_string in
+          match Int64.of_string_opt expiry with
+          | Some expires_at_ms when valid_token access_token ->
+            if expires_at_ms<=now_ms () then let* ()=delete_unlocked t in Lwt.return (Ok None)
+            else Lwt.return (Ok (Some {access_token;expires_at_ms}))
+          | _ -> Lwt.return (Error (Invalid_response "Invalid persisted session"))
+        with Yojson.Json_error _ | Yojson.Safe.Util.Type_error _ -> Lwt.return (Error (Invalid_response "Invalid persisted session")))
+      | _ -> Lwt.return (Error (Invalid_response "Invalid token storage response"))
+    let load t = Lwt_mutex.with_lock t.lock (fun () -> load_unlocked t)
+    let delete t = Lwt.no_cancel (Lwt_mutex.with_lock t.lock (fun () -> delete_unlocked t))
+    let save t (session:session) =
+      if not (valid_token session.access_token) || session.expires_at_ms<=now_ms () then reject "Invalid or expired session" else
+      Lwt.no_cancel (Lwt_mutex.with_lock t.lock (fun () ->
+        let* ()=platform (unit_call "auth.keyEnsure" [t.key_alias]) in
+        let plaintext=Yojson.Safe.to_string (`Assoc ["access_token",`String session.access_token;"expires_at_ms",`String (i64 session.expires_at_ms)]) in
+        let* ciphertext=platform (Storage.Keystore.encrypt ~alias:t.key_alias ~plaintext) in
+        platform (unit_call "auth.secretWrite" [t.name;ciphertext])))
+    let clear_if t access_token = Lwt.no_cancel (Lwt_mutex.with_lock t.lock (fun () ->
+      let* current=load_unlocked t in match current with
+      | Some s when s.access_token=access_token -> delete_unlocked t | _ -> Lwt.return (Ok ())))
+  end
+  type options = { transaction_id:string; public_key_json:string }
+  type grant = { access_token:string; token_type:string; expires_in:int64; recovery_codes:string list }
+  type codecs = {
+    decode_options : Yojson.Safe.t -> (options, string) result;
+    encode_verification : transaction_id:string -> credential:Yojson.Safe.t -> Yojson.Safe.t;
+    decode_grant : Yojson.Safe.t -> (grant, string) result;
+  }
+  let decode_codec message decode input =
+    try match decode input with Ok x -> Ok x | Error _ -> Error (Invalid_response message)
+    with _ -> Error (Invalid_response message)
+  module Client = struct
+    type t = {base_url:string;store:Token_store.t;connect_timeout_ms:int;read_timeout_ms:int;flow_lock:Lwt_mutex.t}
+    let create ~base_url ~token_store ~connect_timeout_ms ~read_timeout_ms =
+      if connect_timeout_ms<=0 || read_timeout_ms<=0 then reject "Positive authentication HTTP timeouts required" else
+      let* base_url=platform (one "auth.baseUrl" [base_url]) in
+      Lwt.return (Ok {base_url;store=token_store;connect_timeout_ms;read_timeout_ms;flow_lock=Lwt_mutex.create ()})
+    let perform t authenticated ~path ~meth ~body =
+      let* url=platform (one "auth.resolveUrl" [t.base_url;path]) in
+      let* session=if authenticated then Token_store.load t.store else Lwt.return (Ok None) in
+      if authenticated && session=None then Lwt.return (Error Not_authenticated) else
+      let headers=["Accept","application/json"] @ (match body with None -> [] | Some _ -> ["Content-Type","application/json"]) @
+        (match session with None -> [] | Some s -> ["Authorization","Bearer "^s.access_token]) in
+      let* response=platform (Network.Http.request ~url ~meth ~headers ~body:(match body with None -> "" | Some j -> Yojson.Safe.to_string j)
+        ~connect_timeout_ms:t.connect_timeout_ms ~read_timeout_ms:t.read_timeout_ms) in
+      let* ()=if response.status=401 then (match session with None -> Lwt.return (Ok ()) | Some s -> Token_store.clear_if t.store s.access_token) else Lwt.return (Ok ()) in
+      if response.status<200 || response.status>=300 then Lwt.return (Error (Http_status response.status))
+      else if response.body="" then Lwt.return (Ok `Null) else Lwt.return (json response.body)
+    let request_public t = perform t false
+    let request t = perform t true
+    let android_payload = function
+      | `Assoc fields -> Ok (`Assoc (("client_kind",`String "android")::List.remove_assoc "client_kind" fields))
+      | _ -> Error (Invalid_argument "Authentication payload must be an object")
+    let ceremony t activity ~authenticated ~creation ~path ~payload ~codecs =
+      let request=if authenticated then request t else request_public t in
+      let* payload=Lwt.return (android_payload payload) in
+      let* raw=request ~path:(path^"/options") ~meth:"POST" ~body:(Some payload) in
+      let* options=Lwt.return (decode_codec "Invalid server options" codecs.decode_options raw) in
+      if options.transaction_id="" then Lwt.return (Error (Invalid_response "Missing authentication transaction")) else
+      let* credential=(if creation then create_passkey else get_passkey) activity ~options_json:options.public_key_json in
+      let* credential=Lwt.return (json credential) in
+      let* verification=Lwt.return (try android_payload (codecs.encode_verification ~transaction_id:options.transaction_id ~credential)
+        with _ -> Error (Invalid_response "Verification encoder failed")) in
+      request ~path:(path^"/verify") ~meth:"POST" ~body:(Some verification)
+    let establish t raw codecs =
+      let* grant=Lwt.return (decode_codec "Invalid session grant" codecs.decode_grant raw) in
+      let now=now_ms () in
+      if not (valid_token grant.access_token) || String.lowercase_ascii grant.token_type<>"bearer" || grant.expires_in<=0L || grant.expires_in>Int64.div (Int64.sub Int64.max_int now) 1000L then
+        Lwt.return (Error (Invalid_response "Invalid session grant or lifetime")) else
+      let expires_at_ms=Int64.add now (Int64.mul grant.expires_in 1000L) in
+      let* ()=Token_store.save t.store {access_token=grant.access_token;expires_at_ms} in Lwt.return (Ok grant)
+    let register t activity ~username ~codecs =
+      if String.trim username="" then reject "Nonempty username required" else
+      Lwt_mutex.with_lock t.flow_lock (fun () ->
+        let* raw=ceremony t activity ~authenticated:false ~creation:true ~path:"/api/auth/register" ~payload:(`Assoc ["username",`String username]) ~codecs in
+        establish t raw codecs)
+    let login t activity ~username ~codecs =
+      Lwt_mutex.with_lock t.flow_lock (fun () ->
+        let payload=`Assoc (match username with None -> [] | Some name -> ["username",`String name]) in
+        let* raw=ceremony t activity ~authenticated:false ~creation:false ~path:"/api/auth/login" ~payload ~codecs in establish t raw codecs)
+    let reauthenticate t activity ~payload ~codecs =
+      Lwt_mutex.with_lock t.flow_lock (fun () -> ceremony t activity ~authenticated:true ~creation:false ~path:"/api/auth/reauth" ~payload ~codecs)
+    let add_passkey t activity ~payload ~codecs =
+      Lwt_mutex.with_lock t.flow_lock (fun () -> ceremony t activity ~authenticated:true ~creation:true ~path:"/api/auth/credentials" ~payload ~codecs)
+    let me t = request t ~path:"/api/auth/me" ~meth:"GET" ~body:None
+    let sessions t = request t ~path:"/api/auth/sessions" ~meth:"GET" ~body:None
+    let credentials t = request t ~path:"/api/auth/credentials" ~meth:"GET" ~body:None
+    let revoke t family id = if id="" || id="." || id=".." then reject "Expected a nonempty, non-dot revocation identifier" else
+      let* segment=platform (one "auth.pathSegment" [id]) in
+      request t ~path:("/api/auth/"^family^"/"^segment) ~meth:"DELETE" ~body:None
+    let revoke_session t ~id = revoke t "sessions" id
+    let revoke_credential t ~id = revoke t "credentials" id
+    let logout t = Lwt_mutex.with_lock t.flow_lock (fun () ->
+      let cleaned=ref false in
+      let cleanup () = Lwt.no_cancel (
+        Token_store.delete t.store >>= fun deleted -> clear_credential_state () >|= fun cleared ->
+        cleaned:=true;(deleted,cleared)) in
+      Lwt.finalize (fun () ->
+        (Token_store.load t.store >>= function
+        | Error e -> Lwt.return (Error e)
+        | Ok None -> Lwt.return (Ok ())
+        | Ok (Some _) -> request t ~path:"/api/auth/logout" ~meth:"POST" ~body:(Some (`Assoc [])) >|= Result.map (fun _ -> ())) >>= fun result ->
+        cleanup () >|= fun (deleted,cleared) -> match deleted,result with Error e,_ -> Error e | _,Error e -> Error e | _,Ok () -> cleared)
+        (fun () -> if !cleaned then Lwt.return_unit else cleanup () >|= ignore))
+  end
+end

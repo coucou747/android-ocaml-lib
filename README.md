@@ -578,3 +578,21 @@ une saisie non confirmée est abandonnée. La démo utilise cette entrée dédi�
 chaque type de préférence et des actions explicites de consentement santé/GPS.
 Aucun Java applicatif ni XML listant les champs n’est nécessaire. Ce stockage
 n’est pas destiné aux secrets.
+
+## Authentification par passkeys
+
+`Android.Authentication` expose Credential Manager et un client de session écrit
+en OCaml : inscription, connexion, réauthentification, ajout/révocation de passkeys,
+profil, sessions et déconnexion. Les enveloppes JSON serveur sont adaptées par des
+callbacks OCaml ; aucune dépendance à Dream n’est imposée au client Android.
+
+Les sessions Bearer sont chiffrées avec Android Keystore et stockées atomiquement
+hors sauvegardes. Les requêtes restent sur l’origine HTTPS configurée, sans suivi
+de redirection ; les 401 invalident la session concernée. Les clés privées de
+passkeys restent chez le fournisseur et les vérifications WebAuthn restent côté
+serveur. La bibliothèque n’implémente pas d’association QR spécifique.
+
+Fournir explicitement URL, délais et noms de stockage, déclarer INTERNET et configurer
+Digital Asset Links avec le domaine et le certificat de signature réels. Voir le
+[guide Android en OCaml](notes/AUTHENTIFICATION-ANDROID.md) pour les adaptateurs,
+les parcours, les erreurs et les exigences des APK distribués hors Play Store.

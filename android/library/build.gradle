@@ -13,6 +13,8 @@ android {
     publishing { singleVariant('release') { withSourcesJar() } }
 }
 dependencies {
+    implementation "androidx.credentials:credentials:${config.getProperty('credentialsVersion')}"
+    runtimeOnly "androidx.credentials:credentials-play-services-auth:${config.getProperty('credentialsVersion')}"
     implementation "androidx.preference:preference:${config.getProperty('preferenceVersion')}"
     implementation "com.google.guava:guava:${config.getProperty('guavaVersion')}"
 

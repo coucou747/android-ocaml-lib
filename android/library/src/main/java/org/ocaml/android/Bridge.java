@@ -82,6 +82,7 @@ public final class Bridge {
         if(event.equals("resumed")) current=a;
         if(!(a instanceof SettingsActivity))for(String sub:lifecycle) emit(sub,a.bridgeId,event);
         if(event.equals("destroyed")) {
+            AuthenticationSupport.cancelFor(a);
             if(current==a) current=null;
             for(Map.Entry<String,View> e:subscriptionViews.entrySet()) if(e.getValue().getContext()==a) cleanupSubscription(e.getKey());
             objects.entrySet().removeIf(e -> e.getValue()==a || (e.getValue() instanceof View && ((View)e.getValue()).getContext()==a));
@@ -118,6 +119,7 @@ public final class Bridge {
         String op=text(command); String[] a=new String[bytes.length];
         for(int i=0;i<a.length;i++) a[i]=text(bytes[i]);
         try {
+            if(op.equals("auth.passkeyStart"))return ui(()->ok(put(AuthenticationSupport.start(get(a[0],Activity.class),a[1],a[2]))));
             if(op.equals("health.backgroundRequest")) {
                 HealthConnectSupport.requireBackgroundAvailable(context);
                 CompletableFuture<String[]> result=ui(()->HealthPermissionsActivity.requestBackground(get(a[0],Activity.class)));
@@ -208,6 +210,17 @@ public final class Bridge {
     }
     private static byte[][] execute(String op,String[] a,byte[][] raw) throws Exception {
         switch(op) {
+        case "auth.passkeyAwait":return ok((Object[])get(a[0],AuthenticationSupport.Request.class).result.get());
+        case "auth.passkeyClose":{Object request=objects.remove(a[0]);if(request instanceof AuthenticationSupport.Request)((AuthenticationSupport.Request)request).close();return ok();}
+        case "auth.clearState":return ok((Object[])AuthenticationSupport.clearState(context));
+        case "auth.identity":return ok(AuthenticationSupport.identity(context));
+        case "auth.keyEnsure":AuthenticationSupport.ensureKey(a[0]);return ok();
+        case "auth.secretRead":{String value=AuthenticationSupport.readSecret(context,a[0]);return value==null?ok():ok(value);}
+        case "auth.secretWrite":AuthenticationSupport.writeSecret(context,a[0],a[1]);return ok();
+        case "auth.secretDelete":AuthenticationSupport.deleteSecret(context,a[0]);return ok();
+        case "auth.baseUrl":return ok(AuthenticationSupport.base(a[0]).toASCIIString());
+        case "auth.resolveUrl":return ok(AuthenticationSupport.resolve(a[0],a[1]));
+        case "auth.pathSegment":return ok(Uri.encode(a[0]));
         case "settings.open": SettingsActivity.open(get(a[0],Activity.class));return ok();
         case "settings.create": {
             SettingsSupport page=new SettingsSupport(get(a[1],Activity.class),a[0],a[2]);

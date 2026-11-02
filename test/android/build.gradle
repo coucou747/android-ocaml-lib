@@ -17,6 +17,7 @@ android {
     sourceSets.main.jniLibs.srcDirs = [new File(rootDir, '../_build/test-jni')]
 }
 dependencies {
+    implementation "androidx.credentials:credentials:${config.getProperty('credentialsVersion')}"
     implementation "androidx.preference:preference:${config.getProperty('preferenceVersion')}"
     implementation project(':library')
     // The instrumented codec checks construct SDK records directly.

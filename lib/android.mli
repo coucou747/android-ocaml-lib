@@ -328,3 +328,75 @@ module Settings : sig
   (** Idempotent. Dismisses dialogs, cancels listeners and releases the root view. *)
   val release : page -> unit response
 end
+
+(** Native passkeys and OCaml authentication orchestration. Server cryptographic
+    verification and authorization remain mandatory. No WebView or private key
+    access. Configuration is supplied by the consuming application. *)
+module Authentication : sig
+  type error = Android of Error.t | Cancelled | No_credential | Unsupported
+    | Provider_error of string | Invalid_argument of string
+    | Invalid_response of string | Http_status of int | Not_authenticated
+  type 'a response = ('a, error) result Lwt.t
+  (** Bare publicKey options JSON from the server, without a publicKey wrapper.
+      User cancellation is Error Cancelled; cancelling the Lwt promise cancels
+      the underlying Android request. Destruction of the activity cancels it too. *)
+  val create_passkey : Activity.t -> options_json:string -> string response
+  val get_passkey : Activity.t -> options_json:string -> string response
+  (** Clears provider session selection state, not passkeys or server sessions. *)
+  val clear_credential_state : unit -> unit response
+  type app_identity = { package_name:string; sha256_cert_fingerprints:string list; origins:string list }
+  (** Current APK signing certificates, for Digital Asset Links/server allowlists.
+      Does not assert that domain association has been configured or verified. *)
+  val app_identity : unit -> app_identity response
+  type session = { access_token:string; expires_at_ms:int64 }
+  module Token_store : sig
+    type t
+    (** Explicit private basename and Android Keystore alias. Ciphertext is stored
+        atomically in noBackupFilesDir; keys/tokens are never put in preferences.
+        Use one instance per filename. No recovery codes are persisted. *)
+    val create : name:string -> key_alias:string -> (t, error) result
+    val save : t -> session -> unit response
+    (** Expired sessions are deleted and returned as None. Corrupt ciphertext or
+        invalidated/missing keys are errors; no silent key regeneration on read. *)
+    val load : t -> session option response
+    val delete : t -> unit response
+  end
+  type options = { transaction_id:string; public_key_json:string }
+  type grant = { access_token:string; token_type:string; expires_in:int64; recovery_codes:string list }
+  (** Codecs adapt the schematic server envelope. decode_grant must decode the
+      real token_type; only Bearer is accepted. Decoder exceptions/messages never
+      cause a server body or a token to be included in library error strings. *)
+  type codecs = {
+    decode_options : Yojson.Safe.t -> (options, string) result;
+    encode_verification : transaction_id:string -> credential:Yojson.Safe.t -> Yojson.Safe.t;
+    decode_grant : Yojson.Safe.t -> (grant, string) result;
+  }
+  module Client : sig
+    type t
+    (** HTTPS base URL with no userinfo, query or fragment; positive timeouts.
+        All paths are resolved and checked against the configured origin.
+        Root /api/auth/* endpoints follow the supplied architecture note. *)
+    val create : base_url:string -> token_store:Token_store.t ->
+      connect_timeout_ms:int -> read_timeout_ms:int -> t response
+    val request_public : t -> path:string -> meth:string -> body:Yojson.Safe.t option -> Yojson.Safe.t response
+    (** Adds Bearer from the store. On 401, deletes only the session used by this
+        request, preserving a newer session saved during the network call.
+        Redirects are errors and never followed. Empty successful body is Null. *)
+    val request : t -> path:string -> meth:string -> body:Yojson.Safe.t option -> Yojson.Safe.t response
+    val register : t -> Activity.t -> username:string -> codecs:codecs -> grant response
+    val login : t -> Activity.t -> username:string option -> codecs:codecs -> grant response
+    (** Payload contains the application's explicit action/context binding.
+        No automatic claim that a session alone authorizes sensitive operations. *)
+    val reauthenticate : t -> Activity.t -> payload:Yojson.Safe.t -> codecs:codecs -> Yojson.Safe.t response
+    val add_passkey : t -> Activity.t -> payload:Yojson.Safe.t -> codecs:codecs -> Yojson.Safe.t response
+    val me : t -> Yojson.Safe.t response
+    val sessions : t -> Yojson.Safe.t response
+    val revoke_session : t -> id:string -> Yojson.Safe.t response
+    val credentials : t -> Yojson.Safe.t response
+    val revoke_credential : t -> id:string -> Yojson.Safe.t response
+    (** Attempts server revocation, always attempts to clear the local token and provider
+        selection state. Network failure is returned: remote revocation is then
+        not confirmed. Does not delete passkeys. *)
+    val logout : t -> unit response
+  end
+end

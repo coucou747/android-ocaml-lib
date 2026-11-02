@@ -297,12 +297,27 @@ module Settings : sig
     | Action of { title:string; description:string option; run:Activity.t -> unit response }
   type schema
   type page
+  (** Register once at process startup, including cold starts. The application
+      manifest selects this name with android.ocaml.settings metadata. Callbacks
+      use the dedicated preferences activity; normal lifecycle subscribers are
+      not notified for this activity. No main activity needs to be opened. *)
+  val register : name:string -> schema ->
+    on_change:(key:string -> Storage.Preferences.value -> unit Lwt.t) ->
+    on_error:(Error.t -> unit Lwt.t) -> (unit, Error.t) result
+  (** Open the registered preferences screen selected by application metadata.
+      Also declared as ACTION_APPLICATION_PREFERENCES for system discovery.
+      Enable SettingsActivity in the client manifest; otherwise Unavailable.
+      Missing metadata is Invalid_argument. System shortcut placement varies. *)
+  val open_ : Activity.t -> unit response
   val define : store:string -> item list -> (schema, Error.t) result
   (** Missing keys return their declared initial value, without writing it.
       Invalid stored values are errors, never silently reset. *)
   val get : schema -> key:string -> Storage.Preferences.value response
   val set : schema -> key:string -> Storage.Preferences.value -> unit response
-  (** Each field commits independently. on_change runs only after a successful UI
+  (** Standard AndroidX PreferenceFragmentCompat screen. The host must be a
+      FragmentActivity (BridgeActivity supports this); use an AppCompat theme.
+      Prefer register/open_ for the dedicated system-discoverable activity.
+      Each field commits independently. on_change runs only after a successful UI
       write. Programmatic set requires refresh and does not invoke on_change.
       Validators are pure and should not raise; exceptions become Platform errors. *)
   val create : Activity.t -> schema ->

@@ -1,6 +1,5 @@
 _build/
 _opam/
-.opam-root/
 .gradle/
 android/.gradle/
 android/**/build/

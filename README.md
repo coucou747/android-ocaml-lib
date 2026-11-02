@@ -24,10 +24,11 @@ de récurrences, ni persistance automatique des alarmes.
 
 ## Vérification sur l'hôte
 
-Dans un switch OCaml 5.4.1, installer les dépendances via
-`opam install ./android-ocaml-lib.opam --deps-only`, puis :
+Utiliser le switch opam existant `android` (OCaml 5.4.1). Installer les dépendances
+avec `opam install --switch=android ./android-ocaml-lib.opam --deps-only`, puis :
 
 ```sh
+export OPAMSWITCH=android
 OCAMLRUNPARAM=b opam exec -- dune build --profile=dev
 OCAMLRUNPARAM=b opam exec -- dune build
 OCAMLRUNPARAM=b opam exec -- dune runtest
@@ -43,10 +44,11 @@ Sur l'hôte, les fonctions publiques utilisant Android renvoient `Unavailable`.
 ## Configuration Android
 
 Installer/configurer un SDK avec la plateforme API 36, le NDK r29
-`29.0.14206865`, un JDK 21 et un switch OCaml 5.4.1 équipé de
+`29.0.14206865`, un JDK 21 et le switch `android` équipé de
 [opam-cross-android](https://github.com/ocaml-cross/opam-cross-android).
-Installer les paquets croisés nécessaires, notamment `ocaml-android` et
-`lwt-android`, en complément des dépendances hôte. Lors de l’installation de
+Installer les paquets croisés `ocaml-android`, `lwt-android` et `yojson-android`
+dans ce même switch, en complément des dépendances hôte. Le nom du switch
+n’implique pas que ces paquets y soient déjà installés. Lors de l’installation de
 `lwt-android`, utiliser `LWT_DISCOVER_ARGUMENTS='--use-libev false'` si aucune libev
 croisée n’est installée : cela sélectionne le moteur `select` fourni par Lwt et
 évite la détection accidentelle de la libev Linux de l’hôte. Ne pas confondre les deux jeux
@@ -59,6 +61,7 @@ Aucun chemin de machine n'est fourni par défaut. Le script n'installe pas le SD
 et n'accepte aucune licence à votre place.
 
 ```sh
+export OPAMSWITCH=android
 scripts/build-android.sh
 # Argument obligatoire : targetSdk explicitement choisi pour l'application de test.
 scripts/build-integration.sh <targetSdk>
@@ -501,7 +504,7 @@ comme celui déjà fourni pour `Camera.uri`. Les racines de FileProvider ne sont
 
 ## Réglages définis par l’application
 
-`Android.Settings` génère un écran depuis une liste OCaml : sections, interrupteurs,
+`Android.Settings` fournit un écran AndroidX Preference depuis une liste OCaml : sections, interrupteurs,
 textes, entiers 64 bits, choix et actions. Les valeurs sont stockées avec
 `Storage.Preferences`, dans le magasin explicitement fourni par le client.
 
@@ -518,8 +521,39 @@ let settings = Android.Settings.define ~store:"my-app-settings" [
 ```
 
 Cet exemple fournit des valeurs de démonstration : chaque application choisit les
-siennes. Traiter le résultat de `define`, puis utiliser `Settings.create activity
-schema ~on_change ~on_error` et afficher `Settings.view page` avec `Ui.show`.
+siennes. Après traitement du résultat de `define`, enregistrer le schéma une fois
+au démarrage du processus, avant le retour de l’entrée OCaml :
+
+```ocaml
+Android.Settings.register ~name:"app-settings" schema ~on_change ~on_error
+```
+
+L’application active l’activité fournie par la bibliothèque et sélectionne ce nom
+avec ces déclarations sous `<application>` (déclarer l’espace `tools` sur `<manifest>`) :
+
+```xml
+<meta-data android:name="android.ocaml.settings" android:value="app-settings" />
+<activity android:name="org.ocaml.android.SettingsActivity"
+          android:enabled="true" tools:replace="android:enabled" />
+```
+
+Cette activité déclare `android.intent.action.APPLICATION_PREFERENCES` ; le système
+peut donc proposer un accès aux préférences de cette application. Son emplacement
+et sa présence dans l’interface dépendent de la version Android et du constructeur.
+Android n’offre pas d’injection libre des champs d’une application dans les pages
+internes de l’application système Paramètres.
+
+`Settings.open_ activity` ouvre le même écran depuis l’application. Il fonctionne
+aussi via l’intent système lorsque le processus est arrêté : le runtime OCaml
+charge le schéma enregistré sans ouvrir l’activité principale. Ne pas enregistrer
+le schéma seulement lors de la construction de l’écran principal. Une rotation
+reconstruit les abonnements et relit les préférences. Une configuration manquante
+est refusée ; une entrée désactivée n’est pas ouverte automatiquement.
+
+Le rendu utilise `PreferenceFragmentCompat`, `PreferenceCategory`,
+`SwitchPreferenceCompat`, `EditTextPreference` et `ListPreference`, avec les dialogues
+et le thème standard AndroidX ; il ne compose plus de formulaire de boutons maison.
+Le thème n’est pas une copie garantie des personnalisations du constructeur.
 Tous les types et callbacks sont documentés dans `lib/android.mli`.
 
 Les interrupteurs et choix enregistrent immédiatement ; textes et nombres ouvrent
@@ -535,9 +569,12 @@ explicite ; modifier le schéma ne constitue pas une migration automatique.
 notifie pas `on_change` ; appeler `Settings.refresh page` pour actualiser l’écran.
 Une action d’autorisation ne stocke aucun booléen représentant le droit Android.
 
-Conserver la page tant qu’elle est utilisée, puis appeler `Settings.release page`.
-La destruction de l’activité ferme aussi les dialogues et désabonne les événements.
-Recréer la page avec la nouvelle activité après rotation ; une saisie non confirmée
-est abandonnée. La démo propose un bouton « Réglages » avec tous les types de champs
-et des actions explicites de consentement santé/GPS. Aucun Java applicatif ni XML
-de préférences n’est nécessaire. Ce stockage n’est pas destiné aux secrets.
+Les opérations `create/view/refresh/release` restent disponibles pour un hôte
+personnalisé : il doit être une `FragmentActivity`, avec un thème AppCompat.
+`BridgeActivity` prend en charge les fragments. Pour l’entrée système, privilégier
+`register/open_` : la bibliothèque gère la page et sa libération.
+La destruction de l’activité ferme les dialogues et désabonne les événements ;
+une saisie non confirmée est abandonnée. La démo utilise cette entrée dédiée avec
+chaque type de préférence et des actions explicites de consentement santé/GPS.
+Aucun Java applicatif ni XML listant les champs n’est nécessaire. Ce stockage
+n’est pas destiné aux secrets.

@@ -1,39 +1,50 @@
 package org.ocaml.android;
-import android.app.*;
-import android.view.*;
-import android.widget.*;
-import org.json.*;
-import java.lang.reflect.*;
-import java.util.List;
-/** UI-only checks; no personal preferences or permission dialogs are used. */
+import android.app.Activity;
+import android.content.Intent;
+import android.content.pm.PackageManager;
+import android.os.Bundle;
+import androidx.appcompat.app.AlertDialog;
+import androidx.fragment.app.FragmentActivity;
+import androidx.preference.*;
+
+/** Regression: use AndroidX preference classes and a system-discoverable entry. */
 public final class SettingsChecks {
     private static void check(boolean c,String m){if(!c)throw new AssertionError(m);}
-    private static Object row(SettingsSupport page,int i) throws Exception {
-        Field f=SettingsSupport.class.getDeclaredField("rows");f.setAccessible(true);return ((List<?>)f.get(page)).get(i);
-    }
-    private static Object field(Object row,String name) throws Exception {Field f=row.getClass().getDeclaredField(name);f.setAccessible(true);return f.get(row);}
-    public static void run(Activity owner) throws Exception {
-        String json="[{\"kind\":\"text\",\"title\":\"Text\",\"description\":null,\"multiline\":false,\"value\":\"old\"},"
+    private static void dialogs(FragmentActivity owner){owner.getSupportFragmentManager().executePendingTransactions();}
+    public static void run(Activity activity) throws Exception {
+        FragmentActivity owner=(FragmentActivity)activity;owner.setTheme(androidx.appcompat.R.style.Theme_AppCompat_DayNight);
+        Intent entry=new Intent(Intent.ACTION_APPLICATION_PREFERENCES).setPackage(owner.getPackageName());
+        android.content.pm.ResolveInfo target=owner.getPackageManager().resolveActivity(entry,PackageManager.MATCH_DEFAULT_ONLY);
+        check(target!=null && target.activityInfo.name.equals(SettingsActivity.class.getName()) && target.activityInfo.exported,"System app preferences entry");
+        check(SettingsActivity.configuredName(owner).equals("integration"),"Application selects schema without Java");
+        String json="[{\"kind\":\"section\",\"title\":\"Section\",\"description\":null},"
+          +"{\"kind\":\"text\",\"title\":\"Text\",\"description\":null,\"multiline\":false,\"value\":\"old\"},"
           +"{\"kind\":\"choice\",\"title\":\"Choice\",\"description\":null,\"value\":\"a\",\"options\":[[\"a\",\"A\"],[\"b\",\"B\"]]},"
           +"{\"kind\":\"toggle\",\"title\":\"Toggle\",\"description\":null,\"value\":\"false\"}]";
         SettingsSupport page=new SettingsSupport(owner,"settings-ui-test",json);
-        Object text=row(page,0);((View)field(text,"view")).performClick();
-        AlertDialog dialog=(AlertDialog)field(text,"dialog");EditText edit=(EditText)field(text,"edit");
-        edit.setText("new");dialog.getButton(AlertDialog.BUTTON_POSITIVE).performClick();
-        check(!dialog.getButton(AlertDialog.BUTTON_POSITIVE).isEnabled(),"Disable until commit acknowledgement");
-        page.result(0,false,"Invalid input");check(dialog.isShowing() && edit.getError()!=null,"Validation keeps editor open");
-        dialog.getButton(AlertDialog.BUTTON_NEGATIVE).performClick();
-        check(((JSONObject)field(text,"spec")).getString("value").equals("old"),"Cancel preserves value");
-        ((View)field(text,"view")).performClick();dialog=(AlertDialog)field(text,"dialog");
-        ((EditText)field(text,"edit")).setText("new");dialog.getButton(AlertDialog.BUTTON_POSITIVE).performClick();
-        page.result(0,true,"new");check(!dialog.isShowing(),"Commit closes editor");
-        Object choice=row(page,1);((View)field(choice,"view")).performClick();
-        dialog=(AlertDialog)field(choice,"dialog");dialog.getListView().performItemClick(null,1,1);
-        page.result(1,true,"b");check(((JSONObject)field(choice,"spec")).getString("value").equals("b"),"Choice commits stable value");
-        Object toggle=row(page,2);((Switch)field(toggle,"toggle")).setChecked(true);
-        page.result(2,false,"Storage failure");check(!((Switch)field(toggle,"toggle")).isChecked(),"Failed commit restores toggle");
-        page.update(json);check(((JSONObject)field(text,"spec")).getString("value").equals("old"),"Refresh updates value");
-        ((View)field(text,"view")).performClick();dialog=(AlertDialog)field(text,"dialog");page.close();page.close();
-        check(!dialog.isShowing(),"Release dismisses open dialog");
+        owner.setContentView(page);page.mount();
+        PreferenceFragmentCompat screen=page.screen;
+        check(screen.findPreference("0") instanceof PreferenceCategory,"Native preference category");
+        EditTextPreference text=screen.findPreference("1");ListPreference choice=screen.findPreference("2");SwitchPreferenceCompat toggle=screen.findPreference("3");
+        check(!text.isPersistent() && !choice.isPersistent() && !toggle.isPersistent(),"Only acknowledged OCaml commits persist");
+        page.screen.onDisplayPreferenceDialog(text);dialogs(owner);
+        SettingsSupport.Editor editor=(SettingsSupport.Editor)owner.getSupportFragmentManager().findFragmentByTag("ocaml.preference.dialog");
+        AlertDialog dialog=(AlertDialog)editor.getDialog();editor.edit.setText("new");dialog.getButton(AlertDialog.BUTTON_POSITIVE).performClick();
+        check(!text.isEnabled(),"Await storage acknowledgement");page.result(1,false,"Invalid input");
+        check(dialog.isShowing() && editor.edit.getError()!=null,"Validation stays in standard preference dialog");
+        dialog.getButton(AlertDialog.BUTTON_NEGATIVE).performClick();dialogs(owner);check(text.getText().equals("old"),"Cancel preserves stored value");
+        page.screen.onDisplayPreferenceDialog(text);dialogs(owner);
+        editor=(SettingsSupport.Editor)owner.getSupportFragmentManager().findFragmentByTag("ocaml.preference.dialog");
+        dialog=(AlertDialog)editor.getDialog();editor.edit.setText("new");dialog.getButton(AlertDialog.BUTTON_POSITIVE).performClick();
+        page.result(1,true,"new");dialogs(owner);check(text.getText().equals("new"),"Confirmed value updates preference");
+        page.screen.onDisplayPreferenceDialog(choice);dialogs(owner);
+        SettingsSupport.Chooser chooser=(SettingsSupport.Chooser)owner.getSupportFragmentManager().findFragmentByTag("ocaml.preference.dialog");
+        ((AlertDialog)chooser.getDialog()).getListView().performItemClick(null,1,1);
+        page.result(2,true,"b");dialogs(owner);check(choice.getValue().equals("b"),"Stable choice value");
+        toggle.callChangeListener(true);page.result(3,false,"Storage failed");check(!toggle.isChecked(),"Rejected switch retains old value");
+        page.update(json);check(text.getText().equals("old"),"Refresh from persisted model");
+        page.screen.onDisplayPreferenceDialog(text);dialogs(owner);
+        editor=(SettingsSupport.Editor)owner.getSupportFragmentManager().findFragmentByTag("ocaml.preference.dialog");dialog=(AlertDialog)editor.getDialog();
+        page.close();page.close();dialogs(owner);check(!dialog.isShowing(),"Close dismisses preference dialogs");
     }
 }

@@ -10,6 +10,7 @@ public final class Bridge {
     static volatile String failure;
     static int alarmReads,healthReads,backgroundRequests,settingsStage;
     static byte[] settingsSubscription;
+    static boolean settingsOpened;
     static final ConcurrentHashMap<String,byte[][]> preferences=new ConcurrentHashMap<>();
     static boolean backgroundGranted;
     static final ConcurrentHashMap<String,CompletableFuture<byte[][]>> locations=new ConcurrentHashMap<>();
@@ -36,11 +37,12 @@ public final class Bridge {
     public static byte[][] dispatch(byte[] op,byte[][] args){
         String name=new String(op,StandardCharsets.UTF_8);
         switch(name){
-        case "preferences.get":{byte[][] v=preferences.get(new String(args[0],StandardCharsets.UTF_8)+"/"+new String(args[1],StandardCharsets.UTF_8));return v==null?ok():ok(v);}
+        case "preferences.get":{if(Arrays.equals(args[0],text("native-launch")))return ok(text("bool"),text(Boolean.toString(settingsOpened)));byte[][] v=preferences.get(new String(args[0],StandardCharsets.UTF_8)+"/"+new String(args[1],StandardCharsets.UTF_8));return v==null?ok():ok(v);}
         case "preferences.set":{
             if(Arrays.equals(args[1],text("fail")))return new byte[][]{text("error"),text("platform"),text("Commit failed")};
             preferences.put(new String(args[0],StandardCharsets.UTF_8)+"/"+new String(args[1],StandardCharsets.UTF_8),new byte[][]{args[2],args[3]});return ok();
         }
+        case "settings.open":events.add(new byte[][]{text("handler"),text("settings-start"),text("android.settings.jni-native"),args[0]});return ok();
         case "settings.create":settingsSubscription=args[0];return ok(text("settings-page"));
         case "settings.update":if(settingsStage++==0)events.add(new byte[][]{settingsSubscription,text("0"),text("true")});return ok();
         case "settings.result":
@@ -95,7 +97,10 @@ public final class Bridge {
         case "unsubscribe":return ok();
         case "location.serviceStart":events.add(new byte[][]{text("handler"),text("gps-token"),args[8],text("gps-event")});return ok();
         case "location.event":return ok(text("{\"type\":\"fix\",\"fix\":"+fix+"}"));
-        case "location.serviceStop":case "runtime.complete":return ok();
+        case "location.serviceStop":return ok();
+        case "ui.show":if(!Arrays.equals(args[1],text("settings-page")))throw new AssertionError("Registered preference page");return ok();
+        case "runtime.complete":
+            if(Arrays.equals(args[0],text("settings-start"))){if(!Arrays.equals(args[1],text("success")))throw new AssertionError("Settings cold handler failed");settingsOpened=true;}return ok();
         case "activity.current":return new byte[][]{text("error"),text("handle"),text("No current activity")};
         case "activity.launchMain":
             if(args.length!=0)failure="Main launch must not require an activity handle";

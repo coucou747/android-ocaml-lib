@@ -140,5 +140,13 @@ let () = Android.Runtime.set_entry (fun () ->
     Android.Storage.Preferences.set ~store:"jni-settings" ~key:"count" (Text "wrong type") >>= require >>= fun () ->
     Android.Settings.get schema ~key:"count" >>= (function Error (Android.Error.Invalid_argument _) -> Lwt.return_unit | _ -> Lwt.fail_with "Invalid persisted type") >>= fun () ->
     Android.Settings.release page >>= require >>= fun () -> Android.Settings.release page >>= require >>= fun () ->
+    let registered_schema=match Android.Settings.define ~store:"jni-native" [] with Ok s -> s | Error _ -> assert false in
+    assert (Android.Settings.register ~name:"jni-native" registered_schema
+      ~on_change:(fun ~key:_ _ -> Lwt.return_unit)
+      ~on_error:(fun _ -> Lwt.fail_with "Native settings launch failed")=Ok ());
+    Android.Settings.open_ activity >>= require >>= fun () ->
+    let rec opened () = Android.Storage.Preferences.get ~store:"native-launch" ~key:"complete" >>= require >>= function
+      | Some (Bool true) -> Lwt.return_unit | _ -> Lwt.pause () >>= opened in
+    opened () >>= fun () ->
     Gc.full_major ();
     Android.Storage.write_file ~name:"done" ~contents:binary >>= require) >>= require >|= fun _ -> ())

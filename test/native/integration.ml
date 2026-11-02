@@ -67,8 +67,6 @@ let alarm activity () =
   Android.Alarm.Screen.show activity {id="integration";notification_id=41;
     title="Alarme de test";text="Écran réutilisable";stop_label="Arrêter";snooze_label="Reporter";
     stop_handler="integration.stop";snooze_handler="integration.snooze";payload="integration"} >>= require
-let main_root = ref None
-let settings_page = ref None
 let settings_schema = match Android.Settings.define ~store:"integration-settings" [
   Section "Démonstration des réglages";
   Toggle {key="enabled";title="Activer la démonstration";description=None;initial=false};
@@ -77,10 +75,7 @@ let settings_schema = match Android.Settings.define ~store:"integration-settings
     validate=Some (fun n -> if n>0L then Ok () else Error "Un entier positif est requis")};
   Choice {key="display";title="Présentation";description=None;initial="compact";options=["compact","Compacte";"detail","Détaillée"]};
   Action {title="Autorisation santé en arrière-plan";description=None;run=(fun activity -> health_background_permissions activity () >|= fun () -> Ok ())};
-  Action {title="Autorisation GPS en arrière-plan";description=None;run=(fun activity -> gps_background_permissions activity () >|= fun () -> Ok ())};
-  Action {title="Retour à la démonstration";description=None;run=(fun activity -> match !main_root with
-    | Some root -> Android.Ui.show activity root
-    | None -> Lwt.return (Error (Android.Error.Invalid_handle "No demo page")))}]
+  Action {title="Autorisation GPS en arrière-plan";description=None;run=(fun activity -> gps_background_permissions activity () >|= fun () -> Ok ())}]
   with Ok schema -> schema | Error _ -> failwith "Invalid demo settings"
 let render activity =
   Android.Ui.scroll_view activity >>= require >>= fun scroll ->
@@ -107,20 +102,19 @@ let render activity =
      "Health Connect : accès en arrière-plan",health_background_permissions activity;
      "GPS : autorisation en arrière-plan",gps_background_permissions activity;
      "GPS : autorisations et cache",gps_status activity; "Arrêter le suivi GPS",(fun () -> Android.Location.stop_tracking_service () >>= require)] >>= fun () ->
-  (match !settings_page with None -> Lwt.return_unit | Some page -> Android.Settings.release page >|= ignore) >>= fun () ->
-  Android.Settings.create activity settings_schema
-    ~on_change:(fun ~key _ -> status ("Réglage enregistré : "^key))
-    ~on_error:(fun _ -> status "Erreur de réglage") >>= require >>= fun settings ->
-  settings_page := Some settings;
   Android.Ui.button activity "Réglages" >>= require >>= fun settings_button ->
   Android.Ui.add layout settings_button >>= require >>= fun () ->
-  Android.Events.on_click settings_button (fun () -> Android.Ui.show activity (Android.Settings.view settings) >>= require) >>= require >>= fun _ ->
+  Android.Events.on_click settings_button (fun () -> Android.Settings.open_ activity >>= require) >>= require >>= fun _ ->
   Android.Ui.add layout preview_slot >>= require >>= fun () ->
   (* Rows and their count are fixture data, not a library configuration. *)
   Lwt_list.iter_s (fun n -> Android.Ui.text activity (Printf.sprintf "Tâche de démonstration %d" n) >>= require >>= fun row ->
     Android.Ui.add layout row >>= require) (List.init 30 ((+) 1)) >>= fun () ->
-  main_root := Some scroll;preview_photo () >>= fun () -> Android.Ui.show activity scroll >>= require
+  preview_photo () >>= fun () -> Android.Ui.show activity scroll >>= require
 let () =
+  (match Android.Settings.register ~name:"integration" settings_schema
+    ~on_change:(fun ~key _ -> status ("Réglage enregistré : "^key))
+    ~on_error:(fun _ -> status "Erreur de réglage") with
+    | Ok () -> () | Error _ -> failwith "Duplicate settings schema");
   let register name handler = match Android.Runtime.register ~name handler with
     | Ok () -> () | Error _ -> failwith "Duplicate integration handler" in
   register "integration.stop" (fun _ ->
@@ -130,9 +124,7 @@ let () =
   Android.Runtime.set_entry (fun () ->
     Android.Activity.on_lifecycle (fun activity event ->
       match event,!screen with
-      | Destroyed,Some ui when ui.activity = activity -> screen := None;
-        (match !settings_page with None -> Lwt.return_unit | Some page -> settings_page:=None;Android.Settings.release page >|= ignore)
-      | Resumed,Some ui when ui.activity = activity ->
-        (match !settings_page with None -> Lwt.return_unit | Some page -> Android.Settings.refresh page >|= ignore)
+      | Destroyed,Some ui when ui.activity = activity -> screen := None;Lwt.return_unit
+      | Resumed,Some ui when ui.activity = activity -> Lwt.return_unit
       | Resumed,_ -> render activity
       | _ -> Lwt.return_unit) >>= require >|= fun _ -> ())

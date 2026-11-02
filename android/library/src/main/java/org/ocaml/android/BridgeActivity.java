@@ -7,7 +7,7 @@ import java.util.*;
 import java.util.concurrent.CompletableFuture;
 
 /** May be subclassed by an application. Forward overridden callbacks to super. */
-public class BridgeActivity extends Activity {
+public class BridgeActivity extends androidx.fragment.app.FragmentActivity {
     String bridgeId;
     volatile String bridgeState="created";
     private int nextRequest;

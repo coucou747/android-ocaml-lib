@@ -13,6 +13,7 @@ android {
     publishing { singleVariant('release') { withSourcesJar() } }
 }
 dependencies {
+    implementation "androidx.preference:preference:${config.getProperty('preferenceVersion')}"
     implementation "com.google.guava:guava:${config.getProperty('guavaVersion')}"
 
     implementation "androidx.health.connect:connect-client:${config.getProperty('healthConnectVersion')}"

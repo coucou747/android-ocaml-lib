@@ -80,7 +80,7 @@ public final class Bridge {
         a.bridgeState=event;
         if(event.equals("created")) { a.bridgeId=put(a); current=a; }
         if(event.equals("resumed")) current=a;
-        for(String sub:lifecycle) emit(sub,a.bridgeId,event);
+        if(!(a instanceof SettingsActivity))for(String sub:lifecycle) emit(sub,a.bridgeId,event);
         if(event.equals("destroyed")) {
             if(current==a) current=null;
             for(Map.Entry<String,View> e:subscriptionViews.entrySet()) if(e.getValue().getContext()==a) cleanupSubscription(e.getKey());
@@ -208,6 +208,7 @@ public final class Bridge {
     }
     private static byte[][] execute(String op,String[] a,byte[][] raw) throws Exception {
         switch(op) {
+        case "settings.open": SettingsActivity.open(get(a[0],Activity.class));return ok();
         case "settings.create": {
             SettingsSupport page=new SettingsSupport(get(a[1],Activity.class),a[0],a[2]);
             ownSubscription(a[0],page);subscriptions.put(a[0],page::close);return ok(put(page));
@@ -248,7 +249,7 @@ public final class Bridge {
             if(Build.VERSION.SDK_INT>=30){android.graphics.Rect bounds=activity.getWindowManager().getCurrentWindowMetrics().getBounds();return ok(bounds.width(),bounds.height());}
             android.util.DisplayMetrics metrics=new android.util.DisplayMetrics();activity.getWindowManager().getDefaultDisplay().getMetrics(metrics);return ok(metrics.widthPixels,metrics.heightPixels);
         }
-        case "activity.lifecycle": lifecycle.add(a[0]); if(current!=null)emit(a[0],current.bridgeId,current.bridgeState); return ok();
+        case "activity.lifecycle": lifecycle.add(a[0]); if(current!=null && !(current instanceof SettingsActivity))emit(a[0],current.bridgeId,current.bridgeState); return ok();
         case "activity.screen": { Window w=get(a[0],Activity.class).getWindow(); if(Boolean.parseBoolean(a[1])) w.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON); else w.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);return ok(); }
         case "ui.text": case "ui.button": case "ui.edit": case "ui.layout": {
             Activity activity=get(a[0],Activity.class); View v;

@@ -577,6 +577,7 @@ module Settings = struct
   let create activity schema ~on_change ~on_error =
     let page_ref=ref None in
     let callback args = match !page_ref,args with
+      | Some page,[|"refresh";""|] when page.active -> refresh page >>= (function Ok () -> Lwt.return_unit | Error e -> on_error e)
       | Some page,[|"closed";""|] -> page.active<-false;Lwt.return_unit
       | Some page,[|index;proposed|] when page.active ->
         (match int_of_string_opt index with
@@ -616,4 +617,14 @@ module Settings = struct
       page.active<-false;
       Lwt.no_cancel (Subscription.cancel page.subscription >>= fun result -> Ui.release page.root >|= fun released ->
       match result,released with Error e,_ -> Error e | _,Error (Error.Invalid_handle _) -> Ok () | _,r -> r))
+  let register ~name schema ~on_change ~on_error =
+    if name="" then Error (Error.Invalid_argument "Settings registration name must be nonempty") else
+    Runtime.register ~name:("android.settings."^name) (fun activity ->
+      create activity schema ~on_change ~on_error >>= function
+      | Error e -> on_error e >|= fun () -> Background.Failure
+      | Ok page -> Ui.show activity (view page) >>= function
+        | Ok () -> Lwt.return Background.Success
+        | Error e -> release page >>= fun _ -> on_error e >|= fun () -> Background.Failure)
+  let open_ activity = unit_call "settings.open" [activity]
+
 end

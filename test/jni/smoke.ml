@@ -140,7 +140,8 @@ let () = Android.Runtime.set_entry (fun () ->
       Toggle {key="enabled";title="Enabled";description=None;initial=false};
       Integer {key="count";title="Count";description=None;initial=1L;validate=Some (fun n -> if n>0L then Ok () else Error "Positive required")};
       Text {key="fail";title="Failure";description=None;initial="";multiline=false;validate=None};
-      Choice {key="mode";title="Mode";description=None;initial="a";options=["a","A";"b","B"]}]
+      Choice {key="mode";title="Mode";description=None;initial="a";options=["a","A";"b","B"]};
+      Info {key="health-info";title="Current permissions";text="Unknown"}]
       with Ok s -> s | Error _ -> failwith "Settings schema" in
     Android.Settings.get schema ~key:"enabled" >>= require >>= fun v -> assert (v=Bool false);
     Android.Storage.Preferences.get ~store:"jni-settings" ~key:"enabled" >>= require >>= fun v -> assert (v=None);
@@ -148,17 +149,43 @@ let () = Android.Runtime.set_entry (fun () ->
     Android.Settings.set schema ~key:"fail" (Text "x") >>= (function Error (Android.Error.Platform _) -> Lwt.return_unit | _ -> Lwt.fail_with "Expected storage failure") >>= fun () ->
     Android.Settings.set schema ~key:"mode" (Text "bad") >>= (function Error (Android.Error.Invalid_argument _) -> Lwt.return_unit | _ -> Lwt.fail_with "Invalid choice") >>= fun () ->
     let changed,changed_wake=Lwt.wait () in let changes=ref 0 in
+    let resumed,resumed_wake=Lwt.wait () in let resumes=ref 0 in
     Android.Settings.create activity schema ~on_error:(fun _ -> Lwt.fail_with "Unexpected settings error")
+      ~on_resume:(fun owner page ->
+        assert (owner=activity);incr resumes;let count = !resumes in
+        Android.Settings.set_info page ~key:"health-info" (Printf.sprintf "permission state %d" count) >>= fun result ->
+        if count=2 then Lwt.wakeup_later resumed_wake ();Lwt.return result)
       ~on_change:(fun ~key value -> incr changes;
         Android.Settings.get schema ~key >>= require >>= fun stored -> assert (stored=value);
         if !changes=2 then Lwt.wakeup_later changed_wake ();Lwt.return_unit) >>= require >>= fun page ->
-    Android.Settings.refresh page >>= require >>= fun () -> changed >>= fun () ->
+    changed >>= fun () -> resumed >>= fun () -> assert (!resumes=2);
+    Android.Settings.refresh page >>= require >>= fun () ->
+    Android.Storage.Preferences.get ~store:"jni-settings" ~key:"health-info" >>= require >>= fun saved -> assert (saved=None);
+    Android.Settings.set_info page ~key:"enabled" "invalid" >>= (function Error (Android.Error.Invalid_argument _) -> Lwt.return_unit | _ -> Lwt.fail_with "Info update of editable row") >>= fun () ->
+    Android.Settings.set_info page ~key:"missing" "invalid" >>= (function Error (Android.Error.Invalid_argument _) -> Lwt.return_unit | _ -> Lwt.fail_with "Unknown info row") >>= fun () ->
     Android.Settings.get schema ~key:"count" >>= require >>= fun v -> assert (v=Int Int64.max_int);
     Android.Storage.Preferences.set ~store:"jni-settings" ~key:"count" (Text "wrong type") >>= require >>= fun () ->
     Android.Settings.get schema ~key:"count" >>= (function Error (Android.Error.Invalid_argument _) -> Lwt.return_unit | _ -> Lwt.fail_with "Invalid persisted type") >>= fun () ->
     Android.Settings.release page >>= require >>= fun () -> Android.Settings.release page >>= require >>= fun () ->
+    Android.Settings.set_info page ~key:"health-info" "late" >>= (function Error (Android.Error.Invalid_argument _) -> Lwt.return_unit | _ -> Lwt.fail_with "Released info page") >>= fun () ->
+    Android.Storage.Preferences.set ~store:"jni-settings" ~key:"count" (Int 1L) >>= require >>= fun () ->
+    Android.Settings.create activity schema ~on_change:(fun ~key:_ _ -> Lwt.fail_with "Unexpected change on reopen")
+      ~on_error:(fun _ -> Lwt.fail_with "Unexpected error on reopen") >>= require >>= fun reopened ->
+    Android.Settings.release reopened >>= require >>= fun () ->
     let registered_schema=match Android.Settings.define ~store:"jni-native" [] with Ok s -> s | Error _ -> assert false in
+    let check_resume_failure on_resume expected =
+      let reported=ref false in
+      Android.Settings.create activity registered_schema ~on_resume
+        ~on_change:(fun ~key:_ _ -> Lwt.fail_with "Unexpected change after resume failure")
+        ~on_error:(fun error -> assert (expected error);reported:=true;Lwt.return_unit) >>= require >>= fun page ->
+      assert !reported;
+      Android.Settings.refresh page >>= require >>= fun () -> Android.Settings.release page >>= require in
+    check_resume_failure (fun _ _ -> Lwt.return (Error (Android.Error.Permission_denied "test")))
+      (function Android.Error.Permission_denied _ -> true | _ -> false) >>= fun () ->
+    check_resume_failure (fun _ _ -> Lwt.fail_with "resume failure")
+      (function Android.Error.Platform _ -> true | _ -> false) >>= fun () ->
     assert (Android.Settings.register ~name:"jni-native" registered_schema
+      ~on_resume:(fun _ _ -> Lwt.return (Ok ()))
       ~on_change:(fun ~key:_ _ -> Lwt.return_unit)
       ~on_error:(fun _ -> Lwt.fail_with "Native settings launch failed")=Ok ());
     Android.Settings.open_ activity >>= require >>= fun () ->

@@ -188,6 +188,7 @@ public final class BindingInstrumentation extends Instrumentation {
         }finally{ok("auth.secretDelete",name);ok("keystore.delete",alias);}
     }
     private void healthLocationTests(String owner) throws Exception {
+        org.ocaml.android.HealthPermissionsChecks.run(getTargetContext());
         org.ocaml.android.HealthLocationChecks.run();
         String health=value("health.status");
         check(health.equals("available") || health.equals("unavailable") || health.equals("update_required"),"Health SDK availability");

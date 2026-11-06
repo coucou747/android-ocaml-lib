@@ -724,6 +724,7 @@ end
 module Settings = struct
   type item =
     | Section of string
+    | Info of { key:string; title:string; text:string }
     | Toggle of { key:string; title:string; description:string option; initial:bool }
     | Text of { key:string; title:string; description:string option; initial:string;
                 multiline:bool; validate:(string -> (unit,string) result) option }
@@ -733,8 +734,9 @@ module Settings = struct
                   options:(string * string) list }
     | Action of { title:string; description:string option; run:Activity.t -> unit response }
   type schema = {store:string; items:item list; lock:Lwt_mutex.t}
-  type page = {root:Ui.view; subscription:Subscription.t; schema:schema; mutable active:bool}
-  let key = function Toggle x -> Some x.key | Text x -> Some x.key | Integer x -> Some x.key | Choice x -> Some x.key | _ -> None
+  type page = {root:Ui.view; subscription:Subscription.t; schema:schema;
+               information:(string,string) Hashtbl.t; mutable active:bool}
+  let key = function Info x -> Some x.key | Toggle x -> Some x.key | Text x -> Some x.key | Integer x -> Some x.key | Choice x -> Some x.key | _ -> None
   let initial = function Toggle x -> Storage.Preferences.Bool x.initial | Text x -> Text x.initial
     | Integer x -> Int x.initial | Choice x -> Text x.initial | _ -> assert false
   let check item value =
@@ -757,9 +759,11 @@ module Settings = struct
           x.options<>[] && List.length (List.sort_uniq String.compare (List.map fst x.options))=List.length x.options
           | _ -> true in
         if not options_valid then Error (Error.Invalid_argument "Settings choices must be nonempty and unique") else
-        match check item (initial item) with Error e -> Error e | Ok () -> Hashtbl.add seen k ();loop rest in
+        match (match item with Info _ -> Ok () | _ -> check item (initial item)) with
+        | Error e -> Error e | Ok () -> Hashtbl.add seen k ();loop rest in
     if store="" then Error (Error.Invalid_argument "Settings store must be nonempty") else loop items
   let find schema k = match List.find_opt (fun i -> key i=Some k) schema.items with
+    | Some (Info _) -> Error (Error.Invalid_argument "Information rows are not stored preferences")
     | Some i -> Ok i | None -> Error (Error.Invalid_argument "Unknown settings key")
   let get_unlocked schema ~key:k = match find schema k with Error e -> Lwt.return (Error e) | Ok item ->
     Storage.Preferences.get ~store:schema.store ~key:k >|= function
@@ -770,32 +774,51 @@ module Settings = struct
     match check item value with Error e -> Lwt.return (Error e) | Ok () -> Storage.Preferences.set ~store:schema.store ~key:k value
   let set schema ~key value = Lwt_mutex.with_lock schema.lock (fun () -> set_unlocked schema ~key value)
   let value_string = function Storage.Preferences.Text v -> v | Bool v -> string_of_bool v | Int v -> i64 v
-  let rows schema =
+  let rows schema information =
     let rec loop acc = function [] -> Lwt.return (Ok (`List (List.rev acc))) | item::rest ->
       let open Yojson.Safe in
       let description x = "description",(match x with None -> `Null | Some s -> `String s) in
       let fields kind title desc = ["kind",`String kind;"title",`String title;description desc] in
       let fields = match item with
         | Section title -> fields "section" title None
+        | Info x -> fields "info" x.title (Some (Option.value (Hashtbl.find_opt information x.key) ~default:x.text))
         | Toggle x -> fields "toggle" x.title x.description
         | Text x -> ("multiline",`Bool x.multiline)::fields "text" x.title x.description
         | Integer x -> fields "integer" x.title x.description
         | Choice x -> ("options",`List (List.map (fun (v,t) -> `List [`String v;`String t]) x.options))::fields "choice" x.title x.description
         | Action x -> fields "action" x.title x.description in
-      (match key item with None -> Lwt.return (Ok fields) | Some k -> get_unlocked schema ~key:k >|= Result.map (fun v -> ("value",`String (value_string v))::fields)) >>= function
+      (match item,key item with Info _,_ | _,None -> Lwt.return (Ok fields)
+       | _,Some k -> get_unlocked schema ~key:k >|= Result.map (fun v -> ("value",`String (value_string v))::fields)) >>= function
       | Error e -> Lwt.return (Error e) | Ok fields -> loop (`Assoc fields::acc) rest in
     loop [] schema.items
   let view page = page.root
+  let refresh_unlocked page =
+    if not page.active then invalid "Settings page released" else
+    rows page.schema page.information >>= function
+    | Error e -> Lwt.return (Error e) | Ok json -> unit_call "settings.update" [page.root;Yojson.Safe.to_string json]
   let refresh page = if not page.active then invalid "Settings page released" else
-    Lwt_mutex.with_lock page.schema.lock (fun () -> rows page.schema >>= function
-      | Error e -> Lwt.return (Error e) | Ok json -> unit_call "settings.update" [page.root;Yojson.Safe.to_string json])
+    Lwt_mutex.with_lock page.schema.lock (fun () -> refresh_unlocked page)
+  let set_info page ~key:k text =
+    if not page.active then invalid "Settings page released" else
+    match List.find_opt (function Info x -> x.key=k | _ -> false) page.schema.items with
+    | None -> invalid "Unknown information row"
+    | Some _ -> Lwt_mutex.with_lock page.schema.lock (fun () ->
+      if not page.active then invalid "Settings page released" else (
+        Hashtbl.replace page.information k text;refresh_unlocked page))
   let error_message = function
     | Error.Unavailable s | Permission_denied s | Invalid_argument s | Invalid_handle s | Platform s | Protocol s -> s
     | Cancelled -> "Operation cancelled"
-  let create activity schema ~on_change ~on_error =
+  let create ?on_resume activity schema ~on_change ~on_error =
     let page_ref=ref None in
+    let resume_lock=Lwt_mutex.create () in
+    let report = function Ok () -> Lwt.return_unit | Error e -> on_error e in
+    let resume page = Lwt_mutex.with_lock resume_lock (fun () ->
+      if not page.active then Lwt.return_unit else
+      (match on_resume with None -> Lwt.return (Ok ()) | Some f ->
+        Lwt.catch (fun () -> f activity page) (fun exn -> Lwt.return (Error (Error.Platform (Printexc.to_string exn))))) >>= fun result ->
+      report result >>= fun () -> if page.active then refresh page >>= report else Lwt.return_unit) in
     let callback args = match !page_ref,args with
-      | Some page,[|"refresh";""|] when page.active -> refresh page >>= (function Ok () -> Lwt.return_unit | Error e -> on_error e)
+      | Some page,[|"refresh";""|] when page.active -> resume page
       | Some page,[|"closed";""|] -> page.active<-false;Lwt.return_unit
       | Some page,[|index;proposed|] when page.active ->
         (match int_of_string_opt index with
@@ -805,7 +828,7 @@ module Settings = struct
           | Action x -> Lwt.catch (fun () -> x.run activity) (fun exn -> Lwt.return (Error (Error.Platform (Printexc.to_string exn)))) >>= (function Ok () -> Lwt.return_unit | Error e -> on_error e) >>= fun () ->
             (if page.active then unit_call "settings.result" [page.root;index;"true";""] >|= ignore else Lwt.return_unit) >>= fun () ->
             refresh page >>= (function Ok () -> Lwt.return_unit | Error e -> on_error e)
-          | Section _ -> Lwt.return_unit
+          | Section _ | Info _ -> Lwt.return_unit
           | _ ->
             let k=Option.get (key item) in
             let value = match item with
@@ -823,22 +846,25 @@ module Settings = struct
             | Ok () -> if page.active then on_change ~key:k (Option.get value) else Lwt.return_unit)
         | _ -> on_error (Error.Protocol "Invalid settings event"))
       | _ -> Lwt.return_unit in
-    Lwt.no_cancel (Lwt_mutex.with_lock schema.lock (fun () -> rows schema >>= function
+    let information=Hashtbl.create (List.length schema.items) in
+    Lwt.no_cancel (Lwt_mutex.with_lock schema.lock (fun () -> rows schema information >>= function
       | Error e -> Lwt.return (Error e)
       | Ok json ->
         let subscription=Subscription.create callback in
         one "settings.create" [subscription.id;activity;Yojson.Safe.to_string json] >>= function
         | Error e -> Subscription.cancel subscription >|= fun _ -> Error e
-        | Ok root -> let page={root;subscription;schema;active=true} in page_ref:=Some page;Lwt.return (Ok page)))
+        | Ok root -> let page={root;subscription;schema;information;active=true} in page_ref:=Some page;Lwt.return (Ok page)) >>= function
+      | Ok page when Option.is_some on_resume -> resume page >|= fun () -> Ok page
+      | result -> Lwt.return result)
   let release page =
     if not page.active then Lwt.return (Ok ()) else (
       page.active<-false;
       Lwt.no_cancel (Subscription.cancel page.subscription >>= fun result -> Ui.release page.root >|= fun released ->
       match result,released with Error e,_ -> Error e | _,Error (Error.Invalid_handle _) -> Ok () | _,r -> r))
-  let register ~name schema ~on_change ~on_error =
+  let register ?on_resume ~name schema ~on_change ~on_error =
     if name="" then Error (Error.Invalid_argument "Settings registration name must be nonempty") else
     Runtime.register ~name:("android.settings."^name) (fun activity ->
-      create activity schema ~on_change ~on_error >>= function
+      create ?on_resume activity schema ~on_change ~on_error >>= function
       | Error e -> on_error e >|= fun () -> Background.Failure
       | Ok page -> Ui.show activity (view page) >>= function
         | Ok () -> Lwt.return Background.Success

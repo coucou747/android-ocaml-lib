@@ -3,16 +3,16 @@ package org.ocaml.android;
 import android.app.Activity;
 import android.content.*;
 import android.os.Bundle;
-import androidx.activity.result.contract.ActivityResultContract;
+import androidx.activity.ComponentActivity;
+import androidx.activity.result.ActivityResultLauncher;
 import androidx.health.connect.client.PermissionController;
 import androidx.health.connect.client.permission.HealthPermission;
 import java.util.*;
 import java.util.concurrent.*;
 
 /** Retains the consent result across activity recreation without replacing BridgeActivity. */
-public final class HealthPermissionsActivity extends Activity {
+public final class HealthPermissionsActivity extends ComponentActivity {
     private static final ConcurrentHashMap<String,Request> pending=new ConcurrentHashMap<>();
-    private static final int PERMISSIONS=1;
     private Request request;private String token;
     private static final class Request {
         final boolean background;
@@ -36,14 +36,16 @@ public final class HealthPermissionsActivity extends Activity {
         try{owner.startActivity(new Intent(owner,HealthPermissionsActivity.class).putExtra("request",token));}
         catch(Exception e){pending.remove(token);throw e;}return request.result;
     }
-    private final ActivityResultContract<Set<String>,Set<String>> contract=PermissionController.createRequestPermissionResultContract();
+    // Register unconditionally and in the same order on every recreation. The
+    // registry handles Android 14's RequestMultiplePermissions pseudo-intent.
+    private final ActivityResultLauncher<Set<String>> launcher=registerForActivityResult(
+        PermissionController.createRequestPermissionResultContract(),granted->{
+            if(request!=null)try{complete(granted);}catch(Exception e){fail(e);}
+        });
     @Override public void onCreate(Bundle state){
         super.onCreate(state);token=getIntent().getStringExtra("request");request=token==null?null:pending.get(token);
         if(request==null){finish();return;}
-        if(state==null)try{
-            ActivityResultContract.SynchronousResult<Set<String>> result=contract.getSynchronousResult(this,request.permissions);
-            if(result!=null)complete(result.getValue());else startActivityForResult(contract.createIntent(this,request.permissions),PERMISSIONS);
-        }catch(Exception e){fail(e);}
+        if(state==null)try{launcher.launch(request.permissions);}catch(Exception e){fail(e);}
     }
     private void complete(Set<String> granted){
         if(request.background){
@@ -57,6 +59,5 @@ public final class HealthPermissionsActivity extends Activity {
         pending.remove(token);request.result.complete(kinds.toArray(new String[0]));finish();
     }
     private void fail(Exception e){pending.remove(token);request.result.completeExceptionally(e);finish();}
-    @Override public void onActivityResult(int code,int result,Intent data){super.onActivityResult(code,result,data);if(code==PERMISSIONS && request!=null)try{complete(contract.parseResult(result,data));}catch(Exception e){fail(e);}}
     @Override public void onDestroy(){if(request!=null && isFinishing() && !isChangingConfigurations() && !request.result.isDone())fail(new IllegalStateException("Health consent interrupted"));super.onDestroy();}
 }

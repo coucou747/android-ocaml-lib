@@ -438,6 +438,7 @@ end
 module Settings : sig
   type item =
     | Section of string
+    | Info of { key:string; title:string; text:string }
     | Toggle of { key:string; title:string; description:string option; initial:bool }
     | Text of { key:string; title:string; description:string option; initial:string;
                 multiline:bool; validate:(string -> (unit,string) result) option }
@@ -451,8 +452,13 @@ module Settings : sig
   (** Register once at process startup, including cold starts. The application
       manifest selects this name with android.ocaml.settings metadata. Callbacks
       use the dedicated preferences activity; normal lifecycle subscribers are
-      not notified for this activity. No main activity needs to be opened. *)
-  val register : name:string -> schema ->
+      not notified for this activity. No main activity needs to be opened.
+      on_resume runs at page creation and whenever SettingsActivity resumes,
+      including return from a permission screen. It can call set_info without
+      acquiring a schema lock. Calls are serialized per page. Errors/exceptions
+      go to on_error and leave the screen available. It must not ask for consent
+      implicitly: use Action rows for permission requests. *)
+  val register : ?on_resume:(Activity.t -> page -> unit response) -> name:string -> schema ->
     on_change:(key:string -> Storage.Preferences.value -> unit Lwt.t) ->
     on_error:(Error.t -> unit Lwt.t) -> (unit, Error.t) result
   (** Open the registered preferences screen selected by application metadata.
@@ -471,11 +477,16 @@ module Settings : sig
       Each field commits independently. on_change runs only after a successful UI
       write. Programmatic set requires refresh and does not invoke on_change.
       Validators are pure and should not raise; exceptions become Platform errors. *)
-  val create : Activity.t -> schema ->
+  val create : ?on_resume:(Activity.t -> page -> unit response) -> Activity.t -> schema ->
     on_change:(key:string -> Storage.Preferences.value -> unit Lwt.t) ->
     on_error:(Error.t -> unit Lwt.t) -> page response
   val view : page -> Ui.view
   val refresh : page -> unit response
+  (** Update the summary of an Info row on this page only. No persistence and no
+      on_change notification. Keys are unique across Info and editable rows.
+      get/set reject Info keys; set_info rejects editable/unknown keys and
+      released pages. refresh preserves updates. A new page starts with text. *)
+  val set_info : page -> key:string -> string -> unit response
   (** Idempotent. Dismisses dialogs, cancels listeners and releases the root view. *)
   val release : page -> unit response
 end

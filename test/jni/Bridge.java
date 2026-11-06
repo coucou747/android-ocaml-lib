@@ -11,6 +11,7 @@ public final class Bridge {
     static int alarmReads,healthReads,backgroundRequests,settingsStage,qrReads;
     static byte[] settingsSubscription;
     static boolean settingsOpened;
+    static boolean informationPage,resumeSent,informationUpdated;
     static final ConcurrentHashMap<String,byte[][]> preferences=new ConcurrentHashMap<>();
     static boolean backgroundGranted;
     static volatile boolean awaitingQr;
@@ -64,8 +65,21 @@ public final class Bridge {
             preferences.put(new String(args[0],StandardCharsets.UTF_8)+"/"+new String(args[1],StandardCharsets.UTF_8),new byte[][]{args[2],args[3]});return ok();
         }
         case "settings.open":events.add(new byte[][]{text("handler"),text("settings-start"),text("android.settings.jni-native"),args[0]});return ok();
-        case "settings.create":settingsSubscription=args[0];return ok(text("settings-page"));
-        case "settings.update":if(settingsStage++==0)events.add(new byte[][]{settingsSubscription,text("0"),text("true")});return ok();
+        case "settings.create":{
+            settingsSubscription=args[0];String json=new String(args[2],StandardCharsets.UTF_8);informationPage=json.contains("Current permissions");
+            if(informationPage && !json.contains("\"description\":\"Unknown\""))throw new AssertionError("Information must restart from its declaration on a new page");
+            return ok(text("settings-page"));
+        }
+        case "settings.update":{
+            String json=new String(args[1],StandardCharsets.UTF_8);
+            if(informationPage){
+                if(!json.contains("\"kind\":\"info\""))throw new AssertionError("Read-only row serialization");
+                if(json.contains("permission state 2"))informationUpdated=true;
+                if(informationUpdated && !json.contains("permission state 2"))throw new AssertionError("Refresh lost transient information");
+                if(!resumeSent && json.contains("permission state 1")){resumeSent=true;events.add(new byte[][]{settingsSubscription,text("refresh"),text("")});}
+            }
+            if(settingsStage==0){settingsStage=1;events.add(new byte[][]{settingsSubscription,text("0"),text("true")});}return ok();
+        }
         case "settings.result":
             if(settingsStage==1){settingsStage++;events.add(new byte[][]{settingsSubscription,text("1"),text("invalid")});}
             else if(settingsStage==2){if(!Arrays.equals(args[2],text("false")))throw new AssertionError("Invalid number accepted");settingsStage++;events.add(new byte[][]{settingsSubscription,text("1"),text("9223372036854775807")});}

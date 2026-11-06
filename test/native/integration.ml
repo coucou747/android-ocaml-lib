@@ -76,6 +76,7 @@ let alarm activity () =
     stop_handler="integration.stop";snooze_handler="integration.snooze";payload="integration"} >>= require
 let settings_schema = match Android.Settings.define ~store:"integration-settings" [
   Section "Démonstration des réglages";
+  Info {key="health-state";title="État de Health Connect";text="Vérification…"};
   Toggle {key="enabled";title="Activer la démonstration";description=None;initial=false};
   Text {key="description";title="Description";description=None;initial="Démonstration API";multiline=true;validate=None};
   Integer {key="count";title="Nombre de tâches";description=None;initial=1L;
@@ -180,6 +181,15 @@ let render activity =
   preview_photo () >>= fun () -> Android.Ui.show activity root >>= require
 let () =
   (match Android.Settings.register ~name:"integration" settings_schema
+    ~on_resume:(fun _ page ->
+      Android.Health_connect.status () >>= function
+      | Error e -> Lwt.return (Error e)
+      | Ok Unavailable -> Android.Settings.set_info page ~key:"health-state" "Indisponible"
+      | Ok Update_required -> Android.Settings.set_info page ~key:"health-state" "Mise à jour requise"
+      | Ok Available -> Android.Health_connect.granted_permissions () >>= function
+        | Error e -> Lwt.return (Error e)
+        | Ok permissions -> Android.Settings.set_info page ~key:"health-state"
+          (Printf.sprintf "Disponible — %d familles autorisées" (List.length permissions)))
     ~on_change:(fun ~key _ -> status ("Réglage enregistré : "^key))
     ~on_error:(fun _ -> status "Erreur de réglage") with
     | Ok () -> () | Error _ -> failwith "Duplicate settings schema");

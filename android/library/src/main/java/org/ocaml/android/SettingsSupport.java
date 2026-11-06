@@ -60,7 +60,8 @@ final class SettingsSupport extends FrameLayout {
                 }
                 row.preference=pref;pref.setKey(Integer.toString(i));pref.setTitle(row.spec.getString("title"));pref.setPersistent(false);
                 if(pref instanceof DialogPreference){((DialogPreference)pref).setDialogTitle(pref.getTitle());}
-                if(kind.equals("action"))pref.setOnPreferenceClickListener(p->{submit(i,"");return true;});
+                if(kind.equals("info")){pref.setSelectable(false);}
+                else if(kind.equals("action"))pref.setOnPreferenceClickListener(p->{submit(i,"");return true;});
                 else pref.setOnPreferenceChangeListener((p,value)->{submit(i,String.valueOf(value));return false;});
                 group.addPreference(pref);if(pref instanceof PreferenceCategory)group=(PreferenceGroup)pref;
                 render(row);
@@ -78,7 +79,7 @@ final class SettingsSupport extends FrameLayout {
         p.setSummary(description.isEmpty()?summary:summary==null || summary.length()==0?description:description+"\n"+summary);
     }
     private void submit(int index,String value){
-        Row row=rows.get(index);if(!active || row.pending)return;
+        Row row=rows.get(index);if(!active || row.pending || row.spec.optString("kind").equals("info") || row.spec.optString("kind").equals("section"))return;
         row.pending=true;row.preference.setEnabled(false);
         if(row.dialog!=null && row.dialog.getDialog()!=null){
             row.dialog.setCancelable(false);AlertDialog d=(AlertDialog)row.dialog.getDialog();

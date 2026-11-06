@@ -17,6 +17,23 @@ let () = Android.Runtime.set_entry (fun () ->
     Android.Ui.text activity "Été 🐫" >>= require >>= fun view ->
     Android.Ui.get_text view >>= require >>= fun text ->
     assert (text = "Été 🐫");
+    Android.Qr_scanner.scan activity >>= require >>= fun qr ->
+    assert (qr = "https://exemple.invalid/été?code=🐫\n\000");
+    Android.Qr_scanner.scan activity >>= require >>= fun qr -> assert (qr = "");
+    Android.Qr_scanner.scan activity >>= (function Error Android.Error.Cancelled -> Lwt.return_unit | _ -> Lwt.fail_with "QR cancellation") >>= fun () ->
+    Android.Qr_scanner.scan activity >>= (function Error (Android.Error.Permission_denied _) -> Lwt.return_unit | _ -> Lwt.fail_with "QR permission denial") >>= fun () ->
+    Android.Qr_scanner.scan activity >>= (function Error (Android.Error.Unavailable _) -> Lwt.return_unit | _ -> Lwt.fail_with "QR unavailable") >>= fun () ->
+    Android.Qr_scanner.scan activity >>= (function Error (Android.Error.Platform _) -> Lwt.return_unit | _ -> Lwt.fail_with "QR platform failure") >>= fun () ->
+    Android.Qr_scanner.scan activity >>= (function Error (Android.Error.Invalid_handle _) -> Lwt.return_unit | _ -> Lwt.fail_with "QR expired owner") >>= fun () ->
+    Android.Qr_scanner.scan activity >>= (function Error (Android.Error.Protocol _) -> Lwt.return_unit | _ -> Lwt.fail_with "QR malformed reply") >>= fun () ->
+    let scan = Android.Qr_scanner.scan activity in
+    let rec scanner_started () =
+      Android.Storage.Preferences.get ~store:"qr-test" ~key:"awaiting" >>= require >>= function
+      | Some (Bool true) -> Lwt.return_unit | _ -> Lwt.pause () >>= scanner_started in
+    scanner_started () >>= fun () ->
+    Lwt.cancel scan; assert (Lwt.is_sleeping scan);
+    Android.Storage.Preferences.set ~store:"qr-test" ~key:"complete" (Bool true) >>= require >>= fun () ->
+    scan >>= require >>= fun qr -> assert (qr = "completed after cancellation");
     Lwt_list.iter_p (fun _ ->
       Android.Storage.read_file ~name:"binary" >>= require >|= fun data -> assert (data = binary))
       [(); (); (); (); (); (); (); ()] >>= fun () ->

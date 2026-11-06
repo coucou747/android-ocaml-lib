@@ -3,7 +3,7 @@
 module Error : sig
   type t = Unavailable of string | Permission_denied of string
     | Invalid_argument of string | Invalid_handle of string
-    | Platform of string | Protocol of string
+    | Platform of string | Protocol of string | Cancelled
 end
 type 'a response = ('a, Error.t) result Lwt.t
 module Subscription : sig
@@ -238,6 +238,20 @@ module Camera : sig
   val of_uri : string -> photo response
   val read : photo -> string response
   val delete : photo -> unit response
+end
+module Qr_scanner : sig
+  (** Open Google Code Scanner for QR codes only and return the raw text without
+      interpreting or opening it. Requires usable Google Play services and their
+      scanner module (downloaded by the provider before first use). No application
+      CAMERA permission is needed.
+
+      Back returns [Error Error.Cancelled]; an unavailable provider/module returns
+      [Error.Unavailable], denied provider camera access [Error.Permission_denied].
+      A destroyed owner returns [Error.Invalid_handle]. Start from a visible
+      activity, with at most one scan in progress. The provider offers no
+      programmatic dismissal: cancelling the Lwt promise is ignored; use Back.
+      Process death does not preserve the OCaml continuation. *)
+  val scan : Activity.t -> string response
 end
 module Alarm : sig
   type mode = Exact | Alarm_clock

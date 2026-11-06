@@ -82,7 +82,7 @@ public final class Bridge {
         if(event.equals("resumed")) current=a;
         if(!(a instanceof SettingsActivity))for(String sub:lifecycle) emit(sub,a.bridgeId,event);
         if(event.equals("destroyed")) {
-            AuthenticationSupport.cancelFor(a);DialogSupport.closeFor(a);
+            AuthenticationSupport.cancelFor(a);DialogSupport.closeFor(a);QrScannerSupport.cancelFor(a);
             if(current==a) current=null;
             for(Map.Entry<String,View> e:subscriptionViews.entrySet()) if(UiSupport.owner(e.getValue().getContext())==a) cleanupSubscription(e.getKey());
             objects.entrySet().removeIf(e -> {
@@ -165,6 +165,10 @@ public final class Bridge {
                 CompletableFuture<String[]> result=ui(()->PhotoCaptureActivity.capture(get(a[0],Activity.class),a[1]));
                 return ok((Object[])result.get());
             }
+            if(op.equals("qr.scan")) {
+                CompletableFuture<String> result=ui(()->QrScannerSupport.scan(get(a[0],Activity.class)));
+                return ok(result.get());
+            }
             if(op.equals("alarm.screen.show")) return ui(()->{AlarmScreenActivity.show(get(a[0],Activity.class),Arrays.copyOfRange(a,1,a.length));return ok();});
             if(op.equals("alarm.screen.notify")) return ui(()->{AlarmScreenActivity.notify(context,a[0],Integer.parseInt(a[1]),Boolean.parseBoolean(a[2]),Arrays.copyOfRange(a,3,a.length));return ok();});
             if(op.equals("alarm.screen.dismiss")) return ui(()->{AlarmScreenActivity.dismiss(context,a[0],Integer.parseInt(a[1]));return ok();});
@@ -175,7 +179,7 @@ public final class Bridge {
             return execute(op,a,bytes);
         } catch(Exception e) {
             while(e instanceof ExecutionException && e.getCause() instanceof Exception) e=(Exception)e.getCause();
-            String kind=e instanceof SecurityException?"permission":e instanceof NoSuchElementException?"handle":
+            String kind=e instanceof CancellationException?"cancelled":e instanceof SecurityException?"permission":e instanceof NoSuchElementException?"handle":
                 e instanceof IllegalArgumentException?"argument":e instanceof UnsupportedOperationException || e instanceof android.content.res.Resources.NotFoundException?"unavailable":"platform";
             return pack("error",kind,e.getClass().getSimpleName()+": "+String.valueOf(e.getMessage()));
         }

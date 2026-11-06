@@ -3,7 +3,7 @@ open Lwt.Infix
 module Error = struct
   type t = Unavailable of string | Permission_denied of string
     | Invalid_argument of string | Invalid_handle of string
-    | Platform of string | Protocol of string
+    | Platform of string | Protocol of string | Cancelled
 end
 
 type 'a response = ('a, Error.t) result Lwt.t
@@ -11,6 +11,7 @@ external invoke : string -> string array -> string array = "android_invoke"
 external take_event : unit -> string array = "android_take_event"
 
 let decode = function
+  | [|"error"; "cancelled"; _|] -> Error Error.Cancelled
   | [|"error"; "permission"; s|] -> Error (Error.Permission_denied s)
   | [|"error"; "argument"; s|] -> Error (Error.Invalid_argument s)
   | [|"error"; "handle"; s|] -> Error (Error.Invalid_handle s)
@@ -373,6 +374,13 @@ module Camera = struct
       | Ok _ -> Error (Error.Protocol "Camera capture result")
   let read photo = one "camera.read" [photo]
   let delete photo = unit_call "camera.delete" [photo]
+end
+
+module Qr_scanner = struct
+  let scan (activity : Activity.t) : string response =
+    (* The provider has no programmatic dismissal API. Keep waiting until its
+       screen completes, rather than abandoning a live scan on Lwt.cancel. *)
+    Lwt.no_cancel (one "qr.scan" [activity])
 end
 
 module Alarm = struct
@@ -781,7 +789,9 @@ module Settings = struct
   let refresh page = if not page.active then invalid "Settings page released" else
     Lwt_mutex.with_lock page.schema.lock (fun () -> rows page.schema >>= function
       | Error e -> Lwt.return (Error e) | Ok json -> unit_call "settings.update" [page.root;Yojson.Safe.to_string json])
-  let error_message = function Error.Unavailable s | Permission_denied s | Invalid_argument s | Invalid_handle s | Platform s | Protocol s -> s
+  let error_message = function
+    | Error.Unavailable s | Permission_denied s | Invalid_argument s | Invalid_handle s | Platform s | Protocol s -> s
+    | Cancelled -> "Operation cancelled"
   let create activity schema ~on_change ~on_error =
     let page_ref=ref None in
     let callback args = match !page_ref,args with

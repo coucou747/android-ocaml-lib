@@ -22,6 +22,13 @@ let capture activity () =
   Android.Camera.capture activity ~name >>= require >>= function
   | Cancelled -> status "Photo annulée"
   | Captured photo -> last_photo := Some photo; preview_photo () >>= fun () -> status "Aperçu de la photo capturée"
+let scan_qr activity () =
+  Android.Qr_scanner.scan activity >>= function
+  | Ok text -> status (Printf.sprintf "QR code lu (%d octets)" (String.length text))
+  | Error Android.Error.Cancelled -> status "Scan annulé"
+  | Error (Android.Error.Permission_denied _) -> status "Caméra du scanner non autorisée"
+  | Error (Android.Error.Unavailable _) -> status "Scanner Google indisponible (services ou module)"
+  | Error _ -> status "Échec du scan QR"
 let local_status () =
   let at_ms = Int64.of_float (Unix.gettimeofday () *. 1000.) in
   Android.Locale.format_date_time ~at_ms >>= require >>= fun date ->
@@ -117,7 +124,7 @@ let render activity =
     Android.Ui.secondary_button activity label >>= require >>= fun button ->
     Android.Ui.add layout button >>= require >>= fun () ->
     Android.Events.on_click button callback >>= require >|= fun _ -> ())
-    ["Dialogue d’information",alert_action activity; "Confirmer une action",confirm_action activity; "Prendre une photo",capture activity; "Écran d’alarme",alarm activity; "Date, son et ressource",local_status;
+    ["Dialogue d’information",alert_action activity; "Confirmer une action",confirm_action activity; "Prendre une photo",capture activity; "Scanner un QR code",scan_qr activity; "Écran d’alarme",alarm activity; "Date, son et ressource",local_status;
      "Health Connect : état",health_status; "Health Connect : autorisations",health_permissions activity;
      "Health Connect : accès en arrière-plan",health_background_permissions activity;
      "GPS : autorisation en arrière-plan",gps_background_permissions activity;

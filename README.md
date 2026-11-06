@@ -197,6 +197,36 @@ Cette délégation ne demande pas elle-même `CAMERA`. Si le client déclare cet
 il doit obtenir l’autorisation avant la capture. Aucun accès général aux fichiers ou
 à la galerie n’est demandé par la bibliothèque.
 
+## Scanner un QR code
+
+```ocaml
+Android.Qr_scanner.scan activity  (* string Android.response *)
+```
+
+Le scanner affiche l’écran de Google Code Scanner, limité au format QR, et renvoie
+le texte brut. L’application n’a aucun Java à écrire ni permission `CAMERA` à
+déclarer pour ce scanner. Le contenu n’est ni ouvert comme URL, ni interprété,
+ni enregistré par la bibliothèque.
+
+Les services Google Play doivent être disponibles et à jour. Leur module de scan
+peut nécessiter un téléchargement avant la première utilisation ; le manifeste
+de l’AAR demande sa préparation lors de l’installation via Google Play. Sur un
+appareil sans ces services ou si le module manque, le résultat est
+`Error (Android.Error.Unavailable _)`. Il n’y a pas de scanner alternatif implicite.
+Voir la [documentation Google Code Scanner](https://developers.google.com/ml-kit/vision/barcode-scanning/code-scanner).
+
+Retour depuis le scanner donne `Error Android.Error.Cancelled` ; un accès caméra
+refusé au fournisseur donne `Permission_denied`. Un QR sans représentation texte
+donne `Unavailable`, tandis qu’un texte vide reste `Ok ""`. Appeler depuis une
+activité visible, avec un seul scan en cours. La destruction de cette activité
+termine l’attente avec `Invalid_handle`, y compris lors d’une recréation.
+Le SDK ne propose pas de fermeture programmatique : `Lwt.cancel` est ignoré pour
+cette opération ; l’utilisateur peut revenir en arrière pour l’annuler.
+La continuation OCaml ne survit pas à la mort du processus.
+
+La démonstration contient un bouton « Scanner un QR code » qui affiche seulement
+la taille du résultat, pour éviter d’exposer son contenu à l’écran.
+
 ## Écran d’alarme
 
 `Android.Alarm.Screen.t` contient l’identifiant d’alarme, l’identifiant de notification,

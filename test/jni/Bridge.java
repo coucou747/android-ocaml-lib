@@ -8,11 +8,13 @@ public final class Bridge {
     static final BlockingQueue<byte[][]> events=new LinkedBlockingQueue<>();
     static final CountDownLatch done=new CountDownLatch(1);
     static volatile String failure;
-    static int alarmReads,healthReads,backgroundRequests,settingsStage;
+    static int alarmReads,healthReads,backgroundRequests,settingsStage,qrReads;
     static byte[] settingsSubscription;
     static boolean settingsOpened;
     static final ConcurrentHashMap<String,byte[][]> preferences=new ConcurrentHashMap<>();
     static boolean backgroundGranted;
+    static volatile boolean awaitingQr;
+    static final CompletableFuture<byte[][]> qrCompletion=new CompletableFuture<>();
     static final ConcurrentHashMap<String,CompletableFuture<byte[][]>> locations=new ConcurrentHashMap<>();
     static volatile boolean awaitingLocation;
     static final String fix="{\"provider\":\"gps\",\"latitude\":1.25,\"longitude\":-2.5,\"accuracy_m\":5,\"altitude_m\":null,\"speed_mps\":null,\"bearing_deg\":null,\"at_ms\":\"2147483648000\",\"elapsed_realtime_ns\":\"9876543210123\",\"is_mock\":true}";
@@ -40,8 +42,24 @@ public final class Bridge {
         if(UiBackend.handles(name,args))return UiBackend.dispatch(name,args);
         if(name.startsWith("auth.") || name.startsWith("http.") || name.startsWith("keystore."))return AuthBackend.dispatch(name,args);
         switch(name){
-        case "preferences.get":{if(Arrays.equals(args[0],text("native-launch")))return ok(text("bool"),text(Boolean.toString(settingsOpened)));byte[][] v=preferences.get(new String(args[0],StandardCharsets.UTF_8)+"/"+new String(args[1],StandardCharsets.UTF_8));return v==null?ok():ok(v);}
+        case "qr.scan":
+            if(args.length!=1 || !Arrays.equals(args[0],text("activity")))throw new AssertionError("QR activity transport");
+            switch(qrReads++){
+            case 0:return ok(text("https://exemple.invalid/été?code=🐫\n\u0000"));
+            case 1:return ok(text(""));
+            case 2:return new byte[][]{text("error"),text("cancelled"),text("Scan cancelled")};
+            case 3:return new byte[][]{text("error"),text("permission"),text("Provider camera denied")};
+            case 4:return new byte[][]{text("error"),text("unavailable"),text("Scanner unavailable")};
+            case 5:return new byte[][]{text("error"),text("platform"),text("Scanner failed")};
+            case 6:return new byte[][]{text("error"),text("handle"),text("Owner destroyed")};
+            case 8:
+                awaitingQr=true;
+                try{return qrCompletion.get();}catch(Exception error){throw new IllegalStateException(error);}finally{awaitingQr=false;}
+            default:return ok();
+            }
+        case "preferences.get":{if(Arrays.equals(args[0],text("qr-test")))return ok(text("bool"),text(Boolean.toString(awaitingQr)));if(Arrays.equals(args[0],text("native-launch")))return ok(text("bool"),text(Boolean.toString(settingsOpened)));byte[][] v=preferences.get(new String(args[0],StandardCharsets.UTF_8)+"/"+new String(args[1],StandardCharsets.UTF_8));return v==null?ok():ok(v);}
         case "preferences.set":{
+            if(Arrays.equals(args[0],text("qr-test"))){qrCompletion.complete(ok(text("completed after cancellation")));return ok();}
             if(Arrays.equals(args[1],text("fail")))return new byte[][]{text("error"),text("platform"),text("Commit failed")};
             preferences.put(new String(args[0],StandardCharsets.UTF_8)+"/"+new String(args[1],StandardCharsets.UTF_8),new byte[][]{args[2],args[3]});return ok();
         }
@@ -127,6 +145,7 @@ public final class Bridge {
         case "storage.fileUri":return ok(text("file:///private/photo%20%C3%A9t%C3%A9.jpg"));
         case "storage.read":return new byte[][]{text("ok"),binary};
         case "storage.write":
+            if(awaitingQr)failure="QR wait did not finish";
             if(!locations.isEmpty())failure="Location request handle leaked";
             if(!Arrays.equals(args[1],binary))failure="Binary JNI write mismatch";
             AuthBackend.checkClean();UiBackend.checkClean();done.countDown();return new byte[][]{text("ok")};

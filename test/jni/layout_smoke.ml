@@ -9,6 +9,8 @@ let run activity =
   let insets:U.insets={left_dp=16;right_dp=16;top_dp=8;bottom_dp=8} in
   let weighted=pure (U.layout ~width:(Dp 0) ~height:Wrap_content ~weight:1. ~margin:insets ~alignment:{horizontal=End;vertical=Middle} ()) in
   U.column activity ~spacing_dp:8 ~padding:insets >>= require >>= fun column ->
+  U.apply_system_bar_insets column >>= require >>= fun () ->
+  U.apply_system_bar_insets column >>= require >>= fun () ->
   U.row activity ~spacing_dp:8 ~alignment:{horizontal=Start;vertical=Middle} >>= require >>= fun row ->
   U.stack activity ~alignment:{horizontal=End;vertical=Bottom} >>= require >>= fun stack ->
   U.nested_scroll_view activity ~fill_viewport:true >>= require >>= fun scroll ->

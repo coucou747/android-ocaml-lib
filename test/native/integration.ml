@@ -169,6 +169,7 @@ let render activity =
     Android.Ui.set_visibility scroll (if id=2 then Visible else Gone) >>= require >>= fun () ->
     Android.Toolbar.set_title toolbar (if id=1 then "Tâches" else "Composants" ) >>= require) >>= require >>= fun _ ->
   Android.Ui.add root navigation >>= require >>= fun () ->
+  Android.Ui.apply_system_bar_insets root >>= require >>= fun () ->
   preview_photo () >>= fun () -> Android.Ui.show activity root >>= require
 let () =
   (match Android.Settings.register ~name:"integration" settings_schema

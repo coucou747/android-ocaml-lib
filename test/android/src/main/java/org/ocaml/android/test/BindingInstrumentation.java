@@ -128,7 +128,7 @@ public final class BindingInstrumentation extends Instrumentation {
         String primary=value("ui.primaryButton",owner,"Save"),secondary=value("ui.secondaryButton",owner,"Cancel");
         check(nativeView(primary,android.view.View.class) instanceof com.google.android.material.button.MaterialButton,"Material primary button");
         check(nativeView(secondary,android.view.View.class) instanceof com.google.android.material.button.MaterialButton,"Material secondary button");
-        ok("ui.add",form,label);ok("ui.margins",root,"1","12","3","4");ok("ui.add",form,root);ok("ui.add",form,primary);ok("ui.add",form,secondary);
+        ok("ui.systemBarInsets",form);ok("ui.systemBarInsets",form);ok("ui.add",form,label);ok("ui.margins",root,"1","12","3","4");ok("ui.add",form,root);ok("ui.add",form,primary);ok("ui.add",form,secondary);
         onUi(()->{
             check("Email".contentEquals(material.getHint()) && "Helper".contentEquals(material.getHelperText()),"Label and helper below field");
             check((editor.getInputType()&android.text.InputType.TYPE_MASK_VARIATION)==android.text.InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS,"Email keyboard");
@@ -155,7 +155,10 @@ public final class BindingInstrumentation extends Instrumentation {
         ok("dialog.resolve",dialog,"positive","true");
         onUi(()->{check(!shown.isShowing() && material.getParent()!=null && nativeView(form,android.view.View.class).getParent()==null,"Dismiss detaches reusable OCaml content");return null;});
         ok("dialog.close",dialog);ok("dialog.close",dialog);ok("unsubscribe","ui-dialog-test");
+        android.view.View insetRoot=nativeView(form,android.view.View.class);
         ok("events.text","ui-field-test",input);ok("ui.release",form);
+        int insetTag=getTargetContext().getResources().getIdentifier("ocaml_system_bar_insets","id",getTargetContext().getPackageName());
+        check(insetRoot.getTag(insetTag)==null,"Release root clears system-inset state");
         check(new String(call("ui.getText",input)[1],StandardCharsets.UTF_8).equals("handle"),"Releasing form invalidates descendant input handles");
         java.lang.reflect.Field listeners=Bridge.class.getDeclaredField("subscriptionViews");listeners.setAccessible(true);
         check(!((java.util.Map<?,?>)listeners.get(null)).containsKey("ui-field-test"),"Releasing form removes descendant subscriptions");
@@ -279,7 +282,7 @@ public final class BindingInstrumentation extends Instrumentation {
             check(Arrays.equals(ok("keystore.decrypt","integration",encrypted)[1],binary),"Keystore roundtrip");
             ok("keystore.delete","integration");ok("storage.remove","roundtrip.bin");
             ok("preferences.remove","integration","answer");
-            final Activity layoutOwner=activity;onUi(()->{org.ocaml.android.LayoutChecks.run(layoutOwner);return null;});
+            final Activity layoutOwner=activity;onUi(()->{org.ocaml.android.SystemBarInsetsChecks.run(layoutOwner);org.ocaml.android.LayoutChecks.run(layoutOwner);return null;});
             componentTests(owner);
             authenticationTests();
             healthLocationTests(owner);

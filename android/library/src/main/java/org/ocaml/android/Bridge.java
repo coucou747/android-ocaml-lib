@@ -85,7 +85,10 @@ public final class Bridge {
             AuthenticationSupport.cancelFor(a);DialogSupport.closeFor(a);
             if(current==a) current=null;
             for(Map.Entry<String,View> e:subscriptionViews.entrySet()) if(UiSupport.owner(e.getValue().getContext())==a) cleanupSubscription(e.getKey());
-            objects.entrySet().removeIf(e -> e.getValue()==a || (e.getValue() instanceof View && UiSupport.owner(((View)e.getValue()).getContext())==a) || (e.getValue() instanceof DialogSupport && ((DialogSupport)e.getValue()).owner==a));
+            objects.entrySet().removeIf(e -> {
+                if(e.getValue() instanceof View && UiSupport.owner(((View)e.getValue()).getContext())==a){SystemBarInsets.clear((View)e.getValue());return true;}
+                return e.getValue()==a || (e.getValue() instanceof DialogSupport && ((DialogSupport)e.getValue()).owner==a);
+            });
         }
     }
     static void emit(String id,Object... values) {
@@ -283,6 +286,7 @@ public final class Bridge {
         case "ui.primaryButton":return ok(put(UiComponents.button(get(a[0],Activity.class),a[1],true)));
         case "ui.secondaryButton":return ok(put(UiComponents.button(get(a[0],Activity.class),a[1],false)));
         case "ui.spacer":return ok(put(UiComponents.spacer(get(a[0],Activity.class),Integer.parseInt(a[1]),Integer.parseInt(a[2]))));
+        case "ui.systemBarInsets":SystemBarInsets.apply(get(a[0],View.class));return ok();
         case "ui.padding":UiComponents.padding(get(a[0],View.class),Integer.parseInt(a[1]),Integer.parseInt(a[2]),Integer.parseInt(a[3]),Integer.parseInt(a[4]));return ok();
         case "ui.margins":LayoutSupport.margins(get(a[0],View.class),Integer.parseInt(a[1]),Integer.parseInt(a[2]),Integer.parseInt(a[3]),Integer.parseInt(a[4]));return ok();
         case "settings.open": SettingsActivity.open(get(a[0],Activity.class));return ok();
@@ -364,7 +368,7 @@ public final class Bridge {
             for(Map.Entry<String,View> e:subscriptionViews.entrySet())if(UiSupport.contains(root,e.getValue()))cleanupSubscription(e.getKey());
             ArrayList<String> handles=new ArrayList<>();for(Map.Entry<String,Object> entry:objects.entrySet())
                 if(entry.getValue() instanceof View && UiSupport.contains(root,(View)entry.getValue())){
-                    if(entry.getValue() instanceof ImageView)((ImageView)entry.getValue()).setImageDrawable(null);handles.add(entry.getKey());
+                    SystemBarInsets.clear((View)entry.getValue());if(entry.getValue() instanceof ImageView)((ImageView)entry.getValue()).setImageDrawable(null);handles.add(entry.getKey());
                 }
             if(root.getParent() instanceof ViewGroup)((ViewGroup)root.getParent()).removeView(root);
             for(String handle:handles)objects.remove(handle);return ok();

@@ -32,7 +32,7 @@ final class UiComponents {
         button.setText(text);return button;
     }
     static void padding(View view,int left,int top,int right,int bottom){
-        Context c=view.getContext();view.setPadding(dp(c,left),dp(c,top),dp(c,right),dp(c,bottom));
+        Context c=view.getContext();SystemBarInsets.padding(view,dp(c,left),dp(c,top),dp(c,right),dp(c,bottom));
     }
     static void margins(View view,int left,int top,int right,int bottom){
         ViewGroup.LayoutParams old=view.getLayoutParams();

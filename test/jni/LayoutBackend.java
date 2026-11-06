@@ -4,7 +4,7 @@ import java.util.concurrent.*;
 import java.nio.charset.StandardCharsets;
 /** Native layout/widget behavior is tested on Android; this fixture checks wire APIs. */
 final class LayoutBackend {
-    static final Set<String> operations=new HashSet<>(Arrays.asList("ui.container","ui.nestedScroll","ui.constraintLayout","ui.visibility","ui.setLayout","ui.addLayout","ui.constraintConnect","ui.constraintClear","ui.constraintBias","ui.toolbar","ui.toolbarTitle","ui.toolbarSubtitle","ui.toolbarActions","events.toolbarAction","events.toolbarNavigation","ui.card","ui.bottomNavigation","ui.navigationSelected","ui.navigationSelect","events.navigationSelect","ui.checkBox","ui.checkState","ui.checkSet","events.checkState","ui.switch","ui.switchChecked","ui.switchSet","events.switchChecked","ui.divider"));
+    static final Set<String> operations=new HashSet<>(Arrays.asList("ui.systemBarInsets","ui.container","ui.nestedScroll","ui.constraintLayout","ui.visibility","ui.setLayout","ui.addLayout","ui.constraintConnect","ui.constraintClear","ui.constraintBias","ui.toolbar","ui.toolbarTitle","ui.toolbarSubtitle","ui.toolbarActions","events.toolbarAction","events.toolbarNavigation","ui.card","ui.bottomNavigation","ui.navigationSelected","ui.navigationSelect","events.navigationSelect","ui.checkBox","ui.checkState","ui.checkSet","events.checkState","ui.switch","ui.switchChecked","ui.switchSet","events.switchChecked","ui.divider"));
     static final Map<String,String> states=new ConcurrentHashMap<>();static int ids;
     static boolean handles(String op,byte[][] args){return operations.contains(op) || op.equals("ui.release") && str(args[0]).startsWith("layout-");}
     static String str(byte[] b){return new String(b,StandardCharsets.UTF_8);}
@@ -17,7 +17,7 @@ final class LayoutBackend {
         case "ui.setLayout":case "ui.addLayout":{
             String json=a[a.length-1];if(!json.startsWith("{"))throw new AssertionError("Layout JSON transport");return ok();}
         case "ui.constraintConnect":if(!a[5].equals("8"))throw new AssertionError("Constraint dp margin");return ok();
-        case "ui.constraintClear":case "ui.constraintBias":case "ui.visibility":return ok();
+        case "ui.constraintClear":case "ui.constraintBias":case "ui.visibility":case "ui.systemBarInsets":return ok();
         case "ui.toolbar":if(!a[5].contains("101"))throw new AssertionError("Toolbar menu IDs");return ok(handle());
         case "ui.toolbarTitle":case "ui.toolbarSubtitle":case "ui.toolbarActions":return ok();
         case "events.toolbarAction":UiBackend.event(a[0],"101");return ok();

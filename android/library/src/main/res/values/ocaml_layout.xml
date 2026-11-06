@@ -1,3 +1,4 @@
 <resources>
   <item name="ocaml_layout_spec" type="id" />
+  <item name="ocaml_system_bar_insets" type="id" />
 </resources>

@@ -92,6 +92,7 @@ module Ui = struct
     let values=[insets.left_dp;insets.top_dp;insets.right_dp;insets.bottom_dp] in
     if not (dimensions_valid values) then invalid "Expected nonnegative Android layout dimensions" else unit_call command (view::List.map s values)
   let set_padding = insets_call "ui.padding"
+  let apply_system_bar_insets view = unit_call "ui.systemBarInsets" [view]
   let set_margins = insets_call "ui.margins"
   type dimension = Wrap_content | Match_parent | Dp of int
   type horizontal = Start | Center | End

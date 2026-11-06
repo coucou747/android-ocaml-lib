@@ -37,6 +37,12 @@ module Ui : sig
   val secondary_button : Activity.t -> string -> view response
   type insets = { left_dp:int; top_dp:int; right_dp:int; bottom_dp:int }
   val set_padding : view -> insets -> unit response
+  (** Install on the root, preferably before show. Adds visible system-bar top/bottom
+      insets to its existing padding; left/right padding is preserved. Repeated calls
+      and redispatches do not accumulate. Later set_padding updates the base padding.
+      Handled vertical bar insets are removed for descendants to avoid double spacing;
+      IME and other inset types remain available. No window flags are changed. *)
+  val apply_system_bar_insets : view -> unit response
   val set_margins : view -> insets -> unit response
   type dimension = Wrap_content | Match_parent | Dp of int
   type horizontal = Start | Center | End

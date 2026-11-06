@@ -17,6 +17,7 @@ android {
     sourceSets.main.jniLibs.srcDirs = [new File(rootDir, '../_build/test-jni')]
 }
 dependencies {
+    implementation "androidx.constraintlayout:constraintlayout:${config.getProperty('constraintLayoutVersion')}"
     implementation "com.google.android.material:material:${config.getProperty('materialVersion')}"
     implementation "androidx.credentials:credentials:${config.getProperty('credentialsVersion')}"
     implementation "androidx.preference:preference:${config.getProperty('preferenceVersion')}"

@@ -38,7 +38,24 @@ module Ui : sig
   type insets = { left_dp:int; top_dp:int; right_dp:int; bottom_dp:int }
   val set_padding : view -> insets -> unit response
   val set_margins : view -> insets -> unit response
-  val spacer : Activity.t -> width_dp:int -> height_dp:int -> view response
+  type dimension = Wrap_content | Match_parent | Dp of int
+  type horizontal = Start | Center | End
+  type vertical = Top | Middle | Bottom
+  type alignment = {horizontal:horizontal; vertical:vertical}
+  type layout
+  (** Unspecified properties preserve the existing/default parent parameters.
+      Weight is dimensionless and only valid in a row/column. With positive weight
+      and omitted size along the parent's axis, that size becomes zero. *)
+  val layout : ?width:dimension -> ?height:dimension -> ?margin:insets ->
+    ?weight:float -> ?alignment:alignment -> unit -> (layout, Error.t) result
+  val set_layout : view -> layout -> unit response
+  val column : ?spacing_dp:int -> ?padding:insets -> ?alignment:alignment -> ?layout:layout -> Activity.t -> view response
+  val row : ?spacing_dp:int -> ?padding:insets -> ?alignment:alignment -> ?layout:layout -> Activity.t -> view response
+  val stack : ?padding:insets -> ?alignment:alignment -> ?layout:layout -> Activity.t -> view response
+  (** Single content root; put a column or stack inside it. *)
+  val nested_scroll_view : ?fill_viewport:bool -> ?padding:insets -> ?layout:layout -> Activity.t -> view response
+  val constraint_layout : ?padding:insets -> ?layout:layout -> Activity.t -> view response
+  val spacer : ?layout:layout -> Activity.t -> width_dp:int -> height_dp:int -> view response
   val edit_text : Activity.t -> string -> view response
   val linear_layout : Activity.t -> orientation -> view response
   (** Vertical ScrollView: use [add] once with a LinearLayout containing the rows.
@@ -56,13 +73,70 @@ module Ui : sig
   val set_hint : view -> string -> unit response
   (** [None] clears the inline validation error. *)
   val set_error : view -> string option -> unit response
-  val add : view -> view -> unit response
+  val add : ?layout:layout -> view -> view -> unit response
   val show : Activity.t -> view -> unit response
   val set_text : view -> string -> unit response
   val get_text : view -> string response
   val set_enabled : view -> bool -> unit response
+  type visibility = Visible | Invisible | Gone
+  val set_visibility : view -> visibility -> unit response
   val release : view -> unit response
 end
+module Constraint : sig
+  type edge = Start | End | Top | Bottom | Baseline
+  type target = Parent | View of Ui.view
+  (** Both views must already be children of this ConstraintLayout. Baseline
+      connections require two baselines and margin zero. IDs are assigned by Ui.add. *)
+  val connect : parent:Ui.view -> Ui.view -> edge:edge -> target:target -> target_edge:edge -> margin_dp:int -> unit response
+  val clear : parent:Ui.view -> Ui.view -> edge:edge -> unit response
+  val set_bias : parent:Ui.view -> Ui.view -> horizontal:float -> vertical:float -> unit response
+end
+module Toolbar : sig
+  type display = Always | If_room | Never
+  type action = {id:int; title:string; icon:int option; display:display}
+  val create : Activity.t -> title:string -> subtitle:string option ->
+    navigation_icon:int option -> navigation_description:string option -> actions:action list -> Ui.view response
+  val set_title : Ui.view -> string -> unit response
+  val set_subtitle : Ui.view -> string option -> unit response
+  val set_actions : Ui.view -> action list -> unit response
+  val on_action : Ui.view -> (int -> unit Lwt.t) -> Subscription.t response
+  val on_navigation : Ui.view -> (unit -> unit Lwt.t) -> Subscription.t response
+end
+module Card : sig
+  (** One content root. Add a row/column with Ui.add; clicks use Events.on_click. *)
+  val create : ?content_padding:Ui.insets -> Activity.t -> Ui.view response
+end
+module Bottom_navigation : sig
+  type item = {id:int; title:string; icon:int}
+  (** Unique positive IDs and icon resources. Maximum item count is checked against
+      the SDK. No initial selection event is emitted. *)
+  val create : Activity.t -> items:item list -> selected:int -> Ui.view response
+  val selected : Ui.view -> int response
+  (** Programmatic selection does not emit on_select; reselecting the current item
+      does not emit an event. The callback handles user section changes. *)
+  val select : Ui.view -> int -> unit response
+  val on_select : Ui.view -> (int -> unit Lwt.t) -> Subscription.t response
+end
+module Check_box : sig
+  type state = Unchecked | Checked | Indeterminate
+  val create : Activity.t -> label:string -> state:state -> Ui.view response
+  val state : Ui.view -> state response
+  val set_state : Ui.view -> state -> unit response
+  (** User changes only; programmatic set_state is silent. *)
+  val on_change : Ui.view -> (state -> unit Lwt.t) -> Subscription.t response
+end
+module Switch : sig
+  val create : Activity.t -> label:string -> checked:bool -> Ui.view response
+  val checked : Ui.view -> bool response
+  val set_checked : Ui.view -> bool -> unit response
+  (** User changes only; programmatic set_checked is silent. *)
+  val on_change : Ui.view -> (bool -> unit Lwt.t) -> Subscription.t response
+end
+module Divider : sig
+  (** Standard horizontal Material divider. Size can be set with Ui.layout. *)
+  val create : Activity.t -> Ui.view response
+end
+
 (** Material dialogs. Custom content remains owned by the caller and is detached
     on dismissal. Views must belong to the same activity and have no parent. *)
 module Dialog : sig

@@ -221,6 +221,51 @@ public final class Bridge {
         case "auth.baseUrl":return ok(AuthenticationSupport.base(a[0]).toASCIIString());
         case "auth.resolveUrl":return ok(AuthenticationSupport.resolve(a[0],a[1]));
         case "auth.pathSegment":return ok(Uri.encode(a[0]));
+        case "ui.container":return ok(put(LayoutSupport.container(get(a[0],Activity.class),a[1],Integer.parseInt(a[2]),a[3])));
+        case "ui.nestedScroll":{androidx.core.widget.NestedScrollView view=new androidx.core.widget.NestedScrollView(UiComponents.theme(get(a[0],Activity.class)));view.setFillViewport(Boolean.parseBoolean(a[1]));return ok(put(view));}
+        case "ui.constraintLayout":return ok(put(new androidx.constraintlayout.widget.ConstraintLayout(UiComponents.theme(get(a[0],Activity.class)))));
+        case "ui.setLayout":LayoutSupport.set(get(a[0],View.class),a[1]);return ok();
+        case "ui.addLayout":LayoutSupport.add(get(a[0],ViewGroup.class),get(a[1],View.class),a[2]);return ok();
+        case "ui.constraintConnect":LayoutSupport.connect(get(a[0],androidx.constraintlayout.widget.ConstraintLayout.class),get(a[1],View.class),a[2],a[3].isEmpty()?null:get(a[3],View.class),a[4],Integer.parseInt(a[5]));return ok();
+        case "ui.constraintClear":LayoutSupport.clear(get(a[0],androidx.constraintlayout.widget.ConstraintLayout.class),get(a[1],View.class),a[2]);return ok();
+        case "ui.constraintBias":LayoutSupport.bias(get(a[0],androidx.constraintlayout.widget.ConstraintLayout.class),get(a[1],View.class),Float.parseFloat(a[2]),Float.parseFloat(a[3]));return ok();
+        case "ui.toolbar":return ok(put(MaterialSupport.toolbar(get(a[0],Activity.class),a[1],a[2],a[3],a[4],a[5])));
+        case "ui.toolbarTitle":get(a[0],com.google.android.material.appbar.MaterialToolbar.class).setTitle(a[1]);return ok();
+        case "ui.toolbarSubtitle":get(a[0],com.google.android.material.appbar.MaterialToolbar.class).setSubtitle(a[1]);return ok();
+        case "ui.toolbarActions":MaterialSupport.actions(get(a[0],com.google.android.material.appbar.MaterialToolbar.class),a[1]);return ok();
+        case "events.toolbarAction":{
+            com.google.android.material.appbar.MaterialToolbar toolbar=get(a[1],com.google.android.material.appbar.MaterialToolbar.class);reserveListener(a[1],"toolbarAction",a[0]);ownSubscription(a[0],toolbar);
+            toolbar.setOnMenuItemClickListener(item->{emit(a[0],item.getItemId());return true;});subscriptions.put(a[0],()->toolbar.setOnMenuItemClickListener(null));return ok();
+        }
+        case "events.toolbarNavigation":{
+            com.google.android.material.appbar.MaterialToolbar toolbar=get(a[1],com.google.android.material.appbar.MaterialToolbar.class);reserveListener(a[1],"toolbarNavigation",a[0]);ownSubscription(a[0],toolbar);
+            toolbar.setNavigationOnClickListener(view->emit(a[0]));subscriptions.put(a[0],()->toolbar.setNavigationOnClickListener(null));return ok();
+        }
+        case "ui.card":return ok(put(MaterialSupport.card(get(a[0],Activity.class),a[1])));
+        case "ui.bottomNavigation":return ok(put(new MaterialSupport.Navigation(get(a[0],Activity.class),a[1],Integer.parseInt(a[2]))));
+        case "ui.navigationSelected":return ok(get(a[0],MaterialSupport.Navigation.class).getSelectedItemId());
+        case "ui.navigationSelect":get(a[0],MaterialSupport.Navigation.class).select(Integer.parseInt(a[1]));return ok();
+        case "events.navigationSelect":{
+            MaterialSupport.Navigation navigation=get(a[1],MaterialSupport.Navigation.class);reserveListener(a[1],"navigationSelect",a[0]);ownSubscription(a[0],navigation);
+            navigation.setOnItemSelectedListener(item->{if(!navigation.muted && navigation.getSelectedItemId()!=item.getItemId())emit(a[0],item.getItemId());return true;});
+            subscriptions.put(a[0],()->navigation.setOnItemSelectedListener(null));return ok();
+        }
+        case "ui.checkBox":return ok(put(new MaterialSupport.Check(get(a[0],Activity.class),a[1],Integer.parseInt(a[2]))));
+        case "ui.checkState":return ok(get(a[0],MaterialSupport.Check.class).getCheckedState());
+        case "ui.checkSet":get(a[0],MaterialSupport.Check.class).state(Integer.parseInt(a[1]));return ok();
+        case "events.checkState":{
+            MaterialSupport.Check view=get(a[1],MaterialSupport.Check.class);reserveListener(a[1],"checked",a[0]);ownSubscription(a[0],view);
+            com.google.android.material.checkbox.MaterialCheckBox.OnCheckedStateChangedListener listener=(button,state)->{if(!view.muted)emit(a[0],state);};
+            view.addOnCheckedStateChangedListener(listener);subscriptions.put(a[0],()->view.removeOnCheckedStateChangedListener(listener));return ok();
+        }
+        case "ui.switch":return ok(put(new MaterialSupport.Toggle(get(a[0],Activity.class),a[1],Boolean.parseBoolean(a[2]))));
+        case "ui.switchChecked":return ok(get(a[0],MaterialSupport.Toggle.class).isChecked());
+        case "ui.switchSet":get(a[0],MaterialSupport.Toggle.class).checked(Boolean.parseBoolean(a[1]));return ok();
+        case "events.switchChecked":{
+            MaterialSupport.Toggle view=get(a[1],MaterialSupport.Toggle.class);reserveListener(a[1],"checked",a[0]);ownSubscription(a[0],view);
+            view.setOnCheckedChangeListener((button,checked)->{if(!view.muted)emit(a[0],checked);});subscriptions.put(a[0],()->view.setOnCheckedChangeListener(null));return ok();
+        }
+        case "ui.divider":return ok(put(new com.google.android.material.divider.MaterialDivider(UiComponents.theme(get(a[0],Activity.class)))));
         case "dialog.show":case "dialog.message":{
             Activity owner=get(a[1],Activity.class);boolean message=op.equals("dialog.message");
             View content=message?new View(owner):get(a[3],View.class);DialogSupport dialog=new DialogSupport(owner,content,a,message);
@@ -239,7 +284,7 @@ public final class Bridge {
         case "ui.secondaryButton":return ok(put(UiComponents.button(get(a[0],Activity.class),a[1],false)));
         case "ui.spacer":return ok(put(UiComponents.spacer(get(a[0],Activity.class),Integer.parseInt(a[1]),Integer.parseInt(a[2]))));
         case "ui.padding":UiComponents.padding(get(a[0],View.class),Integer.parseInt(a[1]),Integer.parseInt(a[2]),Integer.parseInt(a[3]),Integer.parseInt(a[4]));return ok();
-        case "ui.margins":UiComponents.margins(get(a[0],View.class),Integer.parseInt(a[1]),Integer.parseInt(a[2]),Integer.parseInt(a[3]),Integer.parseInt(a[4]));return ok();
+        case "ui.margins":LayoutSupport.margins(get(a[0],View.class),Integer.parseInt(a[1]),Integer.parseInt(a[2]),Integer.parseInt(a[3]),Integer.parseInt(a[4]));return ok();
         case "settings.open": SettingsActivity.open(get(a[0],Activity.class));return ok();
         case "settings.create": {
             SettingsSupport page=new SettingsSupport(get(a[1],Activity.class),a[0],a[2]);
@@ -308,15 +353,11 @@ public final class Bridge {
         case "locale.dateTime": return ok(android.text.format.DateUtils.formatDateTime(context,Long.parseLong(a[0]),
             android.text.format.DateUtils.FORMAT_SHOW_DATE|android.text.format.DateUtils.FORMAT_SHOW_TIME|android.text.format.DateUtils.FORMAT_SHOW_YEAR));
         case "audio.defaultAlarm": {Uri uri=RingtoneManager.getActualDefaultRingtoneUri(context,RingtoneManager.TYPE_ALARM);return uri==null?ok():ok(uri.toString());}
-        case "ui.add": {
-            ViewGroup parent=get(a[0],ViewGroup.class);View child=get(a[1],View.class);
-            if(parent instanceof ScrollView && parent.getChildCount()!=0)throw new IllegalArgumentException("ScrollView accepts one direct child");
-            if(!UiSupport.sameOwner(parent.getContext(),child.getContext()))throw new IllegalArgumentException("Views belong to different activities");
-            parent.addView(child);return ok();
-        }
-        case "ui.show": get(a[0],Activity.class).setContentView(get(a[1],View.class)); return ok();
+        case "ui.add": LayoutSupport.add(get(a[0],ViewGroup.class),get(a[1],View.class),null);return ok();
+        case "ui.show": LayoutSupport.show(get(a[0],Activity.class),get(a[1],View.class));return ok();
         case "ui.setText": get(a[0],TextView.class).setText(a[1]); return ok();
         case "ui.getText": return ok(get(a[0],TextView.class).getText().toString());
+        case "ui.visibility":{View view=get(a[0],View.class);switch(a[1]){case "visible":view.setVisibility(View.VISIBLE);break;case "invisible":view.setVisibility(View.INVISIBLE);break;case "gone":view.setVisibility(View.GONE);break;default:throw new IllegalArgumentException("View visibility");}return ok();}
         case "ui.enabled": get(a[0],View.class).setEnabled(Boolean.parseBoolean(a[1])); return ok();
         case "ui.release": {
             View root=get(a[0],View.class);

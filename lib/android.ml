@@ -93,8 +93,44 @@ module Ui = struct
     if not (dimensions_valid values) then invalid "Expected nonnegative Android layout dimensions" else unit_call command (view::List.map s values)
   let set_padding = insets_call "ui.padding"
   let set_margins = insets_call "ui.margins"
-  let spacer a ~width_dp ~height_dp = if not (dimensions_valid [width_dp;height_dp]) then invalid "Expected nonnegative Android spacer dimensions"
-    else one "ui.spacer" [a;s width_dp;s height_dp]
+  type dimension = Wrap_content | Match_parent | Dp of int
+  type horizontal = Start | Center | End
+  type vertical = Top | Middle | Bottom
+  type alignment = {horizontal:horizontal;vertical:vertical}
+  type layout = {width:dimension option;height:dimension option;margin:insets option;weight:float option;alignment:alignment option}
+  let valid_insets x = dimensions_valid [x.left_dp;x.top_dp;x.right_dp;x.bottom_dp]
+  let layout ?width ?height ?margin ?weight ?alignment () =
+    let valid_dimension = function None | Some Wrap_content | Some Match_parent -> true | Some (Dp n) -> dimensions_valid [n] in
+    if not (valid_dimension width && valid_dimension height) ||
+      not (Option.fold ~none:true ~some:valid_insets margin) ||
+      not (Option.fold ~none:true ~some:(fun n -> Float.is_finite n && n>=0. && n<=3.4028234663852886e38) weight)
+    then Error (Error.Invalid_argument "Invalid layout dimensions, margin or weight") else Ok {width;height;margin;weight;alignment}
+  let alignment_json a = `List [`String (match a.horizontal with Start -> "start" | Center -> "center" | End -> "end");
+    `String (match a.vertical with Top -> "top" | Middle -> "middle" | Bottom -> "bottom")]
+  let insets_json x = `List (List.map (fun n -> `Int n) [x.left_dp;x.top_dp;x.right_dp;x.bottom_dp])
+  let layout_json l =
+    let dimension = function Wrap_content -> `String "wrap" | Match_parent -> `String "match" | Dp n -> `Int n in
+    let optional key f value = match value with None -> [] | Some v -> [key,f v] in
+    `Assoc (optional "width" dimension l.width @ optional "height" dimension l.height @ optional "margin" insets_json l.margin @
+      optional "weight" (fun n -> `Float n) l.weight @ optional "alignment" alignment_json l.alignment)
+  let set_layout view layout = unit_call "ui.setLayout" [view;Yojson.Safe.to_string (layout_json layout)]
+  let configured ?padding ?layout create =
+    if not (Option.fold ~none:true ~some:valid_insets padding) then invalid "Invalid container padding" else
+    Lwt.no_cancel (create () >>= function Error e -> Lwt.return (Error e) | Ok view ->
+      (match padding with None -> Lwt.return (Ok ()) | Some p -> set_padding view p) >>= fun padded ->
+      (match padded,layout with Error e,_ -> Lwt.return (Error e) | Ok (),None -> Lwt.return (Ok ()) | Ok (),Some l -> set_layout view l) >>= function
+      | Ok () -> Lwt.return (Ok view)
+      | Error e -> unit_call "ui.release" [view] >|= fun _ -> Error e)
+  let linear kind ?(spacing_dp=0) ?padding ?alignment ?layout activity =
+    if not (dimensions_valid [spacing_dp]) then invalid "Invalid layout spacing" else
+    configured ?padding ?layout (fun () -> one "ui.container" [activity;kind;s spacing_dp;(match alignment with None -> "" | Some a -> Yojson.Safe.to_string (alignment_json a))])
+  let column = linear "column"
+  let row = linear "row"
+  let stack ?padding ?alignment ?layout activity = configured ?padding ?layout (fun () -> one "ui.container" [activity;"stack";"0";(match alignment with None -> "" | Some a -> Yojson.Safe.to_string (alignment_json a))])
+  let nested_scroll_view ?(fill_viewport=false) ?padding ?layout activity = configured ?padding ?layout (fun () -> one "ui.nestedScroll" [activity;string_of_bool fill_viewport])
+  let constraint_layout ?padding ?layout activity = configured ?padding ?layout (fun () -> one "ui.constraintLayout" [activity])
+  let spacer ?layout a ~width_dp ~height_dp = if not (dimensions_valid [width_dp;height_dp]) then invalid "Expected nonnegative Android spacer dimensions"
+    else configured ?layout (fun () -> one "ui.spacer" [a;s width_dp;s height_dp])
   let edit_text a text = one "ui.edit" [a; text]
   let linear_layout a orientation = one "ui.layout" [a; (match orientation with Horizontal -> "horizontal" | Vertical -> "vertical")]
   let scroll_view a = one "ui.scroll" [a]
@@ -112,11 +148,14 @@ module Ui = struct
   let set_multiline view value = unit_call "ui.multiline" [view; string_of_bool value]
   let set_hint view text = unit_call "ui.hint" [view; text]
   let set_error view error = unit_call "ui.error" [view; (match error with None -> "false" | Some _ -> "true"); Option.value error ~default:""]
-  let add parent child = unit_call "ui.add" [parent; child]
+  let add ?layout parent child = match layout with None -> unit_call "ui.add" [parent;child]
+    | Some l -> unit_call "ui.addLayout" [parent;child;Yojson.Safe.to_string (layout_json l)]
   let show a root = unit_call "ui.show" [a; root]
   let set_text v text = unit_call "ui.setText" [v; text]
   let get_text v = one "ui.getText" [v]
   let set_enabled v b = unit_call "ui.enabled" [v; string_of_bool b]
+  type visibility = Visible | Invisible | Gone
+  let set_visibility view = function Visible -> unit_call "ui.visibility" [view;"visible"] | Invisible -> unit_call "ui.visibility" [view;"invisible"] | Gone -> unit_call "ui.visibility" [view;"gone"]
   let release v = unit_call "ui.release" [v]
 end
 
@@ -203,6 +242,71 @@ module Events = struct
       | Some action, Some x, Some y -> f {action; x; y} | _ -> Lwt.return_unit)
     | _ -> Lwt.return_unit)
 end
+
+module Constraint = struct
+  type edge = Start | End | Top | Bottom | Baseline
+  type target = Parent | View of Ui.view
+  let name = function Start -> "start" | End -> "end" | Top -> "top" | Bottom -> "bottom" | Baseline -> "baseline"
+  let connect ~parent view ~edge ~target ~target_edge ~margin_dp =
+    let compatible=match edge,target_edge with (Start|End),(Start|End) | (Top|Bottom),(Top|Bottom) -> true | Baseline,Baseline -> margin_dp=0 && target<>Parent | _ -> false in
+    if not compatible || not (Ui.dimensions_valid [margin_dp]) then invalid "Incompatible constraint anchors or margin" else
+    unit_call "ui.constraintConnect" [parent;view;name edge;(match target with Parent -> "" | View v -> v);name target_edge;s margin_dp]
+  let clear ~parent view ~edge = unit_call "ui.constraintClear" [parent;view;name edge]
+  let set_bias ~parent view ~horizontal ~vertical =
+    if not (List.for_all (fun n -> Float.is_finite n && n>=0. && n<=1.) [horizontal;vertical]) then invalid "Constraint bias must be between zero and one"
+    else unit_call "ui.constraintBias" [parent;view;string_of_float horizontal;string_of_float vertical]
+end
+module Toolbar = struct
+  type display = Always | If_room | Never
+  type action = {id:int;title:string;icon:int option;display:display}
+  let valid actions = List.for_all (fun x -> x.id>0 && x.id<=Int32.to_int Int32.max_int && x.title<>"" && Option.fold ~none:true ~some:((<) 0) x.icon) actions &&
+    List.length (List.sort_uniq compare (List.map (fun x -> x.id) actions))=List.length actions
+  let encode actions = Yojson.Safe.to_string (`List (List.map (fun x -> `Assoc ["id",`Int x.id;"title",`String x.title;
+    "icon",(match x.icon with None -> `Null | Some id -> `Int id);"display",`String (match x.display with Always -> "always" | If_room -> "if_room" | Never -> "never")]) actions))
+  let create activity ~title ~subtitle ~navigation_icon ~navigation_description ~actions =
+    if not (valid actions) || Option.fold ~none:false ~some:(fun n -> n<=0) navigation_icon ||
+      (Option.is_some navigation_icon && Option.fold ~none:true ~some:((=) "") navigation_description)
+    then invalid "Invalid toolbar actions or navigation icon/description" else
+    one "ui.toolbar" [activity;title;Option.value subtitle ~default:"";Option.fold ~none:"" ~some:s navigation_icon;Option.value navigation_description ~default:"";encode actions]
+  let set_title toolbar title = unit_call "ui.toolbarTitle" [toolbar;title]
+  let set_subtitle toolbar subtitle = unit_call "ui.toolbarSubtitle" [toolbar;Option.value subtitle ~default:""]
+  let set_actions toolbar actions = if not (valid actions) then invalid "Invalid toolbar actions" else unit_call "ui.toolbarActions" [toolbar;encode actions]
+  let on_action toolbar callback = subscribe "events.toolbarAction" [toolbar] (function [|id|] -> (match int_of_string_opt id with Some n -> callback n | None -> Lwt.fail_with "Invalid toolbar action") | _ -> Lwt.return_unit)
+  let on_navigation toolbar callback = subscribe "events.toolbarNavigation" [toolbar] (fun _ -> callback ())
+end
+module Card = struct
+  let create ?content_padding activity =
+    if not (Option.fold ~none:true ~some:Ui.valid_insets content_padding) then invalid "Invalid card content padding" else
+    one "ui.card" [activity;(match content_padding with None -> "" | Some p -> Yojson.Safe.to_string (Ui.insets_json p))]
+end
+module Bottom_navigation = struct
+  type item = {id:int;title:string;icon:int}
+  let create activity ~items ~selected =
+    if items=[] || not (List.for_all (fun x -> x.id>0 && x.id<=Int32.to_int Int32.max_int && x.title<>"" && x.icon>0) items) ||
+      List.length (List.sort_uniq compare (List.map (fun x -> x.id) items))<>List.length items || not (List.exists (fun x -> x.id=selected) items)
+    then invalid "Invalid navigation items or selection" else
+    let json=`List (List.map (fun x -> `Assoc ["id",`Int x.id;"title",`String x.title;"icon",`Int x.icon]) items) in
+    one "ui.bottomNavigation" [activity;Yojson.Safe.to_string json;s selected]
+  let selected navigation = int "ui.navigationSelected" [navigation]
+  let select navigation id = if id<=0 then invalid "Invalid navigation identifier" else unit_call "ui.navigationSelect" [navigation;s id]
+  let on_select navigation callback = subscribe "events.navigationSelect" [navigation] (function [|id|] -> (match int_of_string_opt id with Some n -> callback n | None -> Lwt.fail_with "Invalid navigation event") | _ -> Lwt.return_unit)
+end
+module Check_box = struct
+  type state = Unchecked | Checked | Indeterminate
+  let name = function Unchecked -> "0" | Checked -> "1" | Indeterminate -> "2"
+  let decode = function "0" -> Some Unchecked | "1" -> Some Checked | "2" -> Some Indeterminate | _ -> None
+  let create activity ~label ~state = one "ui.checkBox" [activity;label;name state]
+  let state view = one "ui.checkState" [view] >|= function Error e -> Error e | Ok s -> (match decode s with Some v -> Ok v | None -> Error (Error.Protocol "Checkbox state"))
+  let set_state view state = unit_call "ui.checkSet" [view;name state]
+  let on_change view callback = subscribe "events.checkState" [view] (function [|s|] -> (match decode s with Some v -> callback v | None -> Lwt.fail_with "Invalid checkbox event") | _ -> Lwt.return_unit)
+end
+module Switch = struct
+  let create activity ~label ~checked = one "ui.switch" [activity;label;string_of_bool checked]
+  let checked view = bool "ui.switchChecked" [view]
+  let set_checked view checked = unit_call "ui.switchSet" [view;string_of_bool checked]
+  let on_change view callback = subscribe "events.switchChecked" [view] (function [|s|] -> callback (s="true") | _ -> Lwt.return_unit)
+end
+module Divider = struct let create activity = one "ui.divider" [activity] end
 
 module Form = struct
   type keyboard = Text | Email | Password | Phone | Url | Number of {signed:bool;decimal:bool}

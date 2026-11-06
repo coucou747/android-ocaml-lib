@@ -279,6 +279,7 @@ public final class BindingInstrumentation extends Instrumentation {
             check(Arrays.equals(ok("keystore.decrypt","integration",encrypted)[1],binary),"Keystore roundtrip");
             ok("keystore.delete","integration");ok("storage.remove","roundtrip.bin");
             ok("preferences.remove","integration","answer");
+            final Activity layoutOwner=activity;onUi(()->{org.ocaml.android.LayoutChecks.run(layoutOwner);return null;});
             componentTests(owner);
             authenticationTests();
             healthLocationTests(owner);

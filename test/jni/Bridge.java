@@ -36,6 +36,7 @@ public final class Bridge {
     public static byte[][] takeEvent() throws InterruptedException{return events.take();}
     public static byte[][] dispatch(byte[] op,byte[][] args){
         String name=new String(op,StandardCharsets.UTF_8);
+        if(LayoutBackend.handles(name,args))return LayoutBackend.dispatch(name,args);
         if(UiBackend.handles(name,args))return UiBackend.dispatch(name,args);
         if(name.startsWith("auth.") || name.startsWith("http.") || name.startsWith("keystore."))return AuthBackend.dispatch(name,args);
         switch(name){

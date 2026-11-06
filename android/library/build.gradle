@@ -13,6 +13,7 @@ android {
     publishing { singleVariant('release') { withSourcesJar() } }
 }
 dependencies {
+    implementation "androidx.constraintlayout:constraintlayout:${config.getProperty('constraintLayoutVersion')}"
     implementation "com.google.android.material:material:${config.getProperty('materialVersion')}"
     implementation "androidx.credentials:credentials:${config.getProperty('credentialsVersion')}"
     runtimeOnly "androidx.credentials:credentials-play-services-auth:${config.getProperty('credentialsVersion')}"

@@ -98,11 +98,11 @@ let confirm_action activity () =
   status (if accepted then "Action confirmée" else "Action annulée")
 let alert_action activity () = Android.Dialog.alert activity ~title:"Information" ~message:"Dialogue standard partagé par les applications OCaml." ~button:"Fermer" >>= require
 let render activity =
-  Android.Ui.scroll_view activity >>= require >>= fun scroll ->
+  Android.Ui.nested_scroll_view activity ~fill_viewport:true >>= require >>= fun scroll ->
   Android.Form.container activity >>= require >>= fun layout ->
   Android.Ui.add scroll layout >>= require >>= fun () ->
   Android.Ui.text activity !message >>= require >>= fun label ->
-  Android.Ui.linear_layout activity Android.Ui.Vertical >>= require >>= fun preview_slot ->
+  Android.Ui.column activity ~spacing_dp:8 >>= require >>= fun preview_slot ->
   let ui={activity;layout=preview_slot;label;preview=None} in screen := Some ui;
   Android.Form.text_field activity ~label:"Nombre de tâches" ~help:(Some "Saisir un entier positif") ~text:""
     ~keyboard:(Number {signed=false;decimal=false}) ~multiline:false
@@ -129,7 +129,47 @@ let render activity =
   (* Rows and their count are fixture data, not a library configuration. *)
   Lwt_list.iter_s (fun n -> Android.Ui.text activity (Printf.sprintf "Tâche de démonstration %d" n) >>= require >>= fun row ->
     Android.Ui.add layout row >>= require) (List.init 30 ((+) 1)) >>= fun () ->
-  preview_photo () >>= fun () -> Android.Ui.show activity scroll >>= require
+  (* This screen is fixture data demonstrating native Material/layout bindings. *)
+  let padding:Android.Ui.insets={left_dp=16;top_dp=16;right_dp=16;bottom_dp=16} in
+  let fill=match Android.Ui.layout ~width:Match_parent ~height:Match_parent () with Ok l -> l | Error _ -> assert false in
+  let flexible=match Android.Ui.layout ~width:Match_parent ~height:(Dp 0) ~weight:1. () with Ok l -> l | Error _ -> assert false in
+  Android.Ui.column activity >>= require >>= fun root ->
+  Android.Resources.resolve ~scope:Android ~kind:Drawable ~name:"ic_menu_agenda" >>= require >>= fun tasks_icon ->
+  Android.Resources.resolve ~scope:Android ~kind:Drawable ~name:"ic_menu_preferences" >>= require >>= fun settings_icon ->
+  Android.Toolbar.create activity ~title:"Tâches" ~subtitle:(Some "Composants Material et OCaml") ~navigation_icon:None ~navigation_description:None
+    ~actions:[{id=101;title="Nouvelle tâche";icon=None;display=If_room};{id=102;title="Réglages";icon=Some settings_icon;display=Never}] >>= require >>= fun toolbar ->
+  Android.Toolbar.on_action toolbar (function 101 -> form_dialog activity () | _ -> Android.Settings.open_ activity >>= require) >>= require >>= fun _ ->
+  Android.Ui.add root toolbar >>= require >>= fun () ->
+  Android.Ui.stack activity >>= require >>= fun pages ->
+  Android.Ui.nested_scroll_view activity ~fill_viewport:true >>= require >>= fun tasks_scroll ->
+  Android.Ui.column activity ~spacing_dp:12 ~padding >>= require >>= fun tasks ->
+  Android.Ui.add tasks_scroll tasks >>= require >>= fun () ->
+  Android.Switch.create activity ~label:"Afficher les tâches terminées" ~checked:true >>= require >>= fun show_completed ->
+  Android.Ui.add tasks show_completed >>= require >>= fun () ->
+  let completed=ref [] in
+  Lwt_list.iter_s (fun n ->
+    Android.Card.create activity ~content_padding:padding >>= require >>= fun card ->
+    Android.Ui.column activity ~spacing_dp:8 >>= require >>= fun body ->
+    Android.Check_box.create activity ~label:(Printf.sprintf "Tâche %d" n) ~state:(if n=2 then Checked else Unchecked) >>= require >>= fun checked ->
+    Android.Check_box.on_change checked (fun state ->
+      status (Printf.sprintf "Tâche %d : %s" n (match state with Checked -> "terminée" | Unchecked -> "à faire" | Indeterminate -> "partielle"))) >>= require >>= fun _ ->
+    Android.Ui.text activity "Carte avec présentation partagée" >>= require >>= fun description ->
+    Lwt_list.iter_s (fun child -> Android.Ui.add body child >>= require) [checked;description] >>= fun () ->
+    Android.Ui.add card body >>= require >>= fun () -> Android.Ui.add tasks card >>= require >>= fun () ->
+    if n=2 then completed:=card::!completed;
+    Android.Divider.create activity >>= require >>= fun divider -> Android.Ui.add tasks divider >>= require) [1;2;3] >>= fun () ->
+  Android.Switch.on_change show_completed (fun visible -> Lwt_list.iter_s (fun card -> Android.Ui.set_visibility card (if visible then Visible else Gone) >>= require) !completed) >>= require >>= fun _ ->
+  Android.Ui.add ~layout:fill pages tasks_scroll >>= require >>= fun () ->
+  Android.Ui.add ~layout:fill pages scroll >>= require >>= fun () ->
+  Android.Ui.set_visibility scroll Gone >>= require >>= fun () ->
+  Android.Ui.add ~layout:flexible root pages >>= require >>= fun () ->
+  Android.Bottom_navigation.create activity ~items:[{id=1;title="Tâches";icon=tasks_icon};{id=2;title="Composants";icon=settings_icon}] ~selected:1 >>= require >>= fun navigation ->
+  Android.Bottom_navigation.on_select navigation (fun id ->
+    Android.Ui.set_visibility tasks_scroll (if id=1 then Visible else Gone) >>= require >>= fun () ->
+    Android.Ui.set_visibility scroll (if id=2 then Visible else Gone) >>= require >>= fun () ->
+    Android.Toolbar.set_title toolbar (if id=1 then "Tâches" else "Composants" ) >>= require) >>= require >>= fun _ ->
+  Android.Ui.add root navigation >>= require >>= fun () ->
+  preview_photo () >>= fun () -> Android.Ui.show activity root >>= require
 let () =
   (match Android.Settings.register ~name:"integration" settings_schema
     ~on_change:(fun ~key _ -> status ("Réglage enregistré : "^key))

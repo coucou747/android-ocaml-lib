@@ -610,3 +610,15 @@ les espaces et les insets en dp partagent les styles et ressources de la bibliot
 
 Voir le [guide des interfaces OCaml](notes/INTERFACE-ANDROID.md) et la démo native
 pour un dialogue de saisie avec validation et les règles de libération des vues.
+
+## Écrans Material et mise en page
+
+`Ui.column`, `row`, `stack`, `nested_scroll_view` et `constraint_layout` complètent
+les conteneurs existants. `Ui.layout` et `Ui.add ~layout` règlent les dimensions,
+marges, alignements et poids ; les espacements et insets sont en dp, les poids
+sans unité. Les propriétés peuvent aussi être mises à jour avec `Ui.set_layout`.
+
+Les modules `Toolbar`, `Card`, `Bottom_navigation`, `Check_box`, `Switch` et
+`Divider` exposent les composants Material et leurs événements. La démo montre
+un écran de tâches avec cartes, cases et navigation entre deux sections.
+Voir le [guide de mise en page Material](notes/MISE-EN-PAGE-MATERIAL.md).

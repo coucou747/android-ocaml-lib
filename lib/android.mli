@@ -439,6 +439,7 @@ module Settings : sig
   type item =
     | Section of string
     | Info of { key:string; title:string; text:string }
+    | Status_action of { key:string; title:string; text:string; run:Activity.t -> unit response }
     | Toggle of { key:string; title:string; description:string option; initial:bool }
     | Text of { key:string; title:string; description:string option; initial:string;
                 multiline:bool; validate:(string -> (unit,string) result) option }
@@ -454,10 +455,15 @@ module Settings : sig
       use the dedicated preferences activity; normal lifecycle subscribers are
       not notified for this activity. No main activity needs to be opened.
       on_resume runs at page creation and whenever SettingsActivity resumes,
-      including return from a permission screen. It can call set_info without
+      including return from a permission screen, and after a Status_action
+      completes (success or error). It can call set_info or set_summary without
       acquiring a schema lock. Calls are serialized per page. Errors/exceptions
       go to on_error and leave the screen available. It must not ask for consent
-      implicitly: use Action rows for permission requests. *)
+      implicitly: use Action or Status_action rows for permission requests.
+      Status_action combines a clickable native Preference and a transient text
+      summary. Its run callback receives this screen's activity; no preference
+      value is stored and on_change is never called for this row. While run is
+      pending the row stays disabled, including during summary updates. *)
   val register : ?on_resume:(Activity.t -> page -> unit response) -> name:string -> schema ->
     on_change:(key:string -> Storage.Preferences.value -> unit Lwt.t) ->
     on_error:(Error.t -> unit Lwt.t) -> (unit, Error.t) result
@@ -487,6 +493,12 @@ module Settings : sig
       get/set reject Info keys; set_info rejects editable/unknown keys and
       released pages. refresh preserves updates. A new page starts with text. *)
   val set_info : page -> key:string -> string -> unit response
+  (** Update the summary of a Status_action or Info row. Same page-local lifetime
+      as set_info; no persistence and no on_change notification. get/set reject
+      Status_action keys. Other keys and released pages are Invalid_argument.
+      Use on_resume to read the actual system permission and supply the summary;
+      run can request consent or open the appropriate settings to revoke it. *)
+  val set_summary : page -> key:string -> string -> unit response
   (** Idempotent. Dismisses dialogs, cancels listeners and releases the root view. *)
   val release : page -> unit response
 end

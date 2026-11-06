@@ -192,6 +192,7 @@ let () = Android.Runtime.set_entry (fun () ->
     let rec opened () = Android.Storage.Preferences.get ~store:"native-launch" ~key:"complete" >>= require >>= function
       | Some (Bool true) -> Lwt.return_unit | _ -> Lwt.pause () >>= opened in
     opened () >>= fun () ->
+    Settings_smoke.run activity >>= fun () ->
     Layout_smoke.run activity >>= fun () ->
     Ui_smoke.run activity >>= fun () ->
     Auth_smoke.run activity >>= fun () ->

@@ -104,8 +104,7 @@ final class SettingsSupport extends FrameLayout {
     void update(String json) throws JSONException {
         if(!active)return;JSONArray next=new JSONArray(json);
         if(next.length()!=specs.length())throw new IllegalArgumentException("Preference schema changed");specs=next;
-        for(int i=0;i<rows.size();i++){Row row=rows.get(i);row.spec=specs.getJSONObject(i);
-            if(row.spec.getString("kind").equals("action")){row.pending=false;row.preference.setEnabled(true);}render(row);}
+        for(int i=0;i<rows.size();i++){Row row=rows.get(i);row.spec=specs.getJSONObject(i);render(row);}
     }
     void close(){
         if(!active)return;active=false;pages.remove(this);Bridge.emit(subscription,"closed","");

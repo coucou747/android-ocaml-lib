@@ -21,7 +21,8 @@ public final class SettingsChecks {
           +"{\"kind\":\"text\",\"title\":\"Text\",\"description\":null,\"multiline\":false,\"value\":\"old\"},"
           +"{\"kind\":\"choice\",\"title\":\"Choice\",\"description\":null,\"value\":\"a\",\"options\":[[\"a\",\"A\"],[\"b\",\"B\"]]},"
           +"{\"kind\":\"toggle\",\"title\":\"Toggle\",\"description\":null,\"value\":\"false\"},"
-          +"{\"kind\":\"info\",\"title\":\"Permissions\",\"description\":\"Unknown\"}]";
+          +"{\"kind\":\"info\",\"title\":\"Permissions\",\"description\":\"Unknown\"},"
+          +"{\"kind\":\"action\",\"title\":\"Location permission\",\"description\":\"Denied\"}]";
         SettingsSupport page=new SettingsSupport(owner,"settings-ui-test",json);
         owner.setContentView(page);page.mount();
         PreferenceFragmentCompat screen=page.screen;
@@ -30,6 +31,13 @@ public final class SettingsChecks {
         Preference info=screen.findPreference("4");
         check(!info.isSelectable() && info.isEnabled() && !info.isPersistent(),"Information is a native read-only row, without disabled styling or storage");
         check("Unknown".contentEquals(info.getSummary()) && info.getOnPreferenceChangeListener()==null && info.getOnPreferenceClickListener()==null,"Information has no edit or action callback");
+        Preference action=screen.findPreference("5");
+        check(action.isSelectable() && !action.isPersistent() && "Denied".contentEquals(action.getSummary()),"One native row combines status and action");
+        action.getOnPreferenceClickListener().onPreferenceClick(action);
+        check(!action.isEnabled(),"Permission action waits for OCaml completion");
+        page.update(json.replace("Denied","Granted"));
+        check("Granted".contentEquals(action.getSummary()) && !action.isEnabled(),"Summary update must not enable a pending permission action");
+        page.result(5,true,"");check(action.isEnabled(),"Completion enables the permission row");
         check(!text.isPersistent() && !choice.isPersistent() && !toggle.isPersistent(),"Only acknowledged OCaml commits persist");
         page.screen.onDisplayPreferenceDialog(text);dialogs(owner);
         SettingsSupport.Editor editor=(SettingsSupport.Editor)owner.getSupportFragmentManager().findFragmentByTag("ocaml.preference.dialog");

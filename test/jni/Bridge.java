@@ -39,6 +39,7 @@ public final class Bridge {
     public static byte[][] takeEvent() throws InterruptedException{return events.take();}
     public static byte[][] dispatch(byte[] op,byte[][] args){
         String name=new String(op,StandardCharsets.UTF_8);
+        if(SettingsBackend.handles(name,args))return SettingsBackend.dispatch(name,args);
         if(LayoutBackend.handles(name,args))return LayoutBackend.dispatch(name,args);
         if(UiBackend.handles(name,args))return UiBackend.dispatch(name,args);
         if(name.startsWith("auth.") || name.startsWith("http.") || name.startsWith("keystore."))return AuthBackend.dispatch(name,args);
@@ -162,7 +163,7 @@ public final class Bridge {
             if(awaitingQr)failure="QR wait did not finish";
             if(!locations.isEmpty())failure="Location request handle leaked";
             if(!Arrays.equals(args[1],binary))failure="Binary JNI write mismatch";
-            AuthBackend.checkClean();UiBackend.checkClean();done.countDown();return new byte[][]{text("ok")};
+            AuthBackend.checkClean();UiBackend.checkClean();SettingsBackend.checkClean();done.countDown();return new byte[][]{text("ok")};
         case "activity.lifecycle":
             events.add(new byte[][]{args[0],text("activity"),text("resumed")});
             return new byte[][]{text("ok")};

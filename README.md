@@ -535,7 +535,7 @@ comme celui déjà fourni pour `Camera.uri`. Les racines de FileProvider ne sont
 ## Réglages définis par l’application
 
 `Android.Settings` fournit un écran AndroidX Preference depuis une liste OCaml : sections, interrupteurs,
-textes, entiers 64 bits, choix, actions et informations en lecture seule. Les valeurs éditables sont stockées avec
+textes, entiers 64 bits, choix, actions à état actualisable et informations en lecture seule. Les valeurs éditables sont stockées avec
 `Storage.Preferences`, dans le magasin explicitement fourni par le client.
 
 ```ocaml
@@ -558,43 +558,59 @@ au démarrage du processus, avant le retour de l’entrée OCaml :
 Android.Settings.register ~name:"app-settings" schema ~on_change ~on_error
 ```
 
-Pour afficher un état du système, ajouter par exemple au schéma :
+Pour réunir le droit réel et son action dans une seule ligne, ajouter au schéma :
 
 ```ocaml
-Info {key="health-background"; title="Lecture santé en arrière-plan";
-      text="Vérification…"}
+Status_action {key="health-background"; title="Lecture santé en arrière-plan";
+  text="Vérification…";
+  run=(fun activity ->
+    let open Lwt.Infix in
+    Android.Health_connect.background_read_granted () >>= function
+    | Error e -> Lwt.return (Error e)
+    | Ok true -> Android.Health_connect.open_settings activity
+    | Ok false -> Android.Health_connect.request_background_read activity
+        >|= Result.map (fun _ -> ()))}
 ```
 
 Un callback optionnel sur `register` (ou `create`) recalcule l’état à la création
-de la page puis à chaque reprise de `SettingsActivity`, notamment au retour d’un
-écran de consentement :
+de la page, à chaque reprise de `SettingsActivity` et après la fin d’une
+`Status_action` (réussite ou erreur) :
 
 ```ocaml
 let on_resume _activity page =
   let open Lwt.Infix in
   Android.Health_connect.background_read_available () >>= function
   | Error e -> Lwt.return (Error e)
-  | Ok false -> Android.Settings.set_info page ~key:"health-background" "Indisponible"
+  | Ok false -> Android.Settings.set_summary page ~key:"health-background" "Indisponible"
   | Ok true -> Android.Health_connect.background_read_granted () >>= function
     | Error e -> Lwt.return (Error e)
-    | Ok granted -> Android.Settings.set_info page ~key:"health-background"
+    | Ok granted -> Android.Settings.set_summary page ~key:"health-background"
         (if granted then "Autorisé" else "Non autorisé")
 
 let register_result =
   Android.Settings.register ~on_resume ~name:"app-settings" schema ~on_change ~on_error
 ```
 
-Ce callback observe les droits ; les demandes de consentement restent des
-`Action` explicites. Ses appels sont sérialisés par page, hors du verrou du
+Le clic reçoit l’activité des réglages et relit le droit avant de choisir entre
+demander le consentement et ouvrir sa gestion. La révocation reste effectuée par
+l’utilisateur dans Android ou Health Connect. Le résumé ne représente pas une
+préférence booléenne persistée et ne préjuge pas du résultat du consentement.
+La ligne reste désactivée pendant son action, même si le résumé change entre-temps.
+
+Le callback `on_resume` observe les droits ; les demandes de consentement restent
+des clics explicites. Ses appels sont sérialisés par page, hors du verrou du
 schéma, et ses erreurs ou exceptions passent par `on_error`. Un échec ne ferme
-pas l’écran. Une page hébergée ailleurs peut être mise à jour via `set_info` depuis
+pas l’écran. Une page hébergée ailleurs peut être mise à jour via `set_summary` depuis
 son propre callback de cycle de vie.
 
-`Settings.set_info page ~key text` change uniquement le résumé de la ligne `Info`
-de cette page, sans sauvegarde ni notification `on_change`. `Settings.refresh`
+`Settings.set_summary page ~key text` change le résumé d’une `Status_action` ou
+d’une `Info` de cette page, sans sauvegarde ni notification `on_change`.
+`Info {key; title; text}` reste la variante non cliquable ; `set_info` reste
+disponible uniquement pour celle-ci. `Settings.refresh`
 préserve ce texte ; une nouvelle page repart du `text` déclaré. Les clés sont
-uniques pour toutes les lignes nommées. `Settings.get/set` refusent les clés `Info` ;
-`set_info` refuse les clés inconnues ou éditables et les pages libérées.
+uniques pour toutes les lignes nommées. `Settings.get/set` refusent les clés
+`Info` et `Status_action` ; `set_summary` refuse les clés inconnues ou éditables
+et les pages libérées. Les anciennes lignes `Action` restent inchangées.
 
 L’application active l’activité fournie par la bibliothèque et sélectionne ce nom
 avec ces déclarations sous `<application>` (déclarer l’espace `tools` sur `<manifest>`) :

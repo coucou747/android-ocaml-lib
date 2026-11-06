@@ -1,6 +1,7 @@
 open Android
 let toggle key = Settings.Toggle {key;title=key;description=None;initial=false}
 let info key = Settings.Info {key;title="Current state";text="Unknown"}
+let status_action key = Settings.Status_action {key;title="Permission";text="Unknown";run=(fun _ -> Lwt.return (Ok ()))}
 let invalid = function Error (Error.Invalid_argument _) -> () | _ -> failwith "Expected settings argument error"
 let () =
   Printexc.record_backtrace true;
@@ -9,6 +10,12 @@ let () =
   invalid (Settings.define ~store:"prefs" [toggle "a";toggle "a"]);
   invalid (Settings.define ~store:"prefs" [info ""]);
   invalid (Settings.define ~store:"prefs" [info "state";toggle "state"]);
+  invalid (Settings.define ~store:"prefs" [status_action ""]);
+  invalid (Settings.define ~store:"prefs" [status_action "state";info "state"]);
+  invalid (Settings.define ~store:"prefs" [status_action "state";toggle "state"]);
+  let action = match Settings.define ~store:"prefs" [status_action "permission"] with Ok s -> s | Error _ -> failwith "Status action schema" in
+  Lwt_main.run (Lwt.bind (Settings.get action ~key:"permission") (fun result -> invalid result;
+    Lwt.bind (Settings.set action ~key:"permission" (Storage.Preferences.Bool true)) (fun result -> invalid result;Lwt.return_unit)));
   let information = match Settings.define ~store:"prefs" [info "state"] with Ok s -> s | Error _ -> failwith "Information schema" in
   Lwt_main.run (Lwt.bind (Settings.get information ~key:"state") (fun result -> invalid result;
     Lwt.bind (Settings.set information ~key:"state" (Storage.Preferences.Text "Granted")) (fun result -> invalid result;Lwt.return_unit)));

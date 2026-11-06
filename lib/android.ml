@@ -725,6 +725,7 @@ module Settings = struct
   type item =
     | Section of string
     | Info of { key:string; title:string; text:string }
+    | Status_action of { key:string; title:string; text:string; run:Activity.t -> unit response }
     | Toggle of { key:string; title:string; description:string option; initial:bool }
     | Text of { key:string; title:string; description:string option; initial:string;
                 multiline:bool; validate:(string -> (unit,string) result) option }
@@ -736,7 +737,7 @@ module Settings = struct
   type schema = {store:string; items:item list; lock:Lwt_mutex.t}
   type page = {root:Ui.view; subscription:Subscription.t; schema:schema;
                information:(string,string) Hashtbl.t; mutable active:bool}
-  let key = function Info x -> Some x.key | Toggle x -> Some x.key | Text x -> Some x.key | Integer x -> Some x.key | Choice x -> Some x.key | _ -> None
+  let key = function Info x -> Some x.key | Status_action x -> Some x.key | Toggle x -> Some x.key | Text x -> Some x.key | Integer x -> Some x.key | Choice x -> Some x.key | _ -> None
   let initial = function Toggle x -> Storage.Preferences.Bool x.initial | Text x -> Text x.initial
     | Integer x -> Int x.initial | Choice x -> Text x.initial | _ -> assert false
   let check item value =
@@ -759,11 +760,11 @@ module Settings = struct
           x.options<>[] && List.length (List.sort_uniq String.compare (List.map fst x.options))=List.length x.options
           | _ -> true in
         if not options_valid then Error (Error.Invalid_argument "Settings choices must be nonempty and unique") else
-        match (match item with Info _ -> Ok () | _ -> check item (initial item)) with
+        match (match item with Info _ | Status_action _ -> Ok () | _ -> check item (initial item)) with
         | Error e -> Error e | Ok () -> Hashtbl.add seen k ();loop rest in
     if store="" then Error (Error.Invalid_argument "Settings store must be nonempty") else loop items
   let find schema k = match List.find_opt (fun i -> key i=Some k) schema.items with
-    | Some (Info _) -> Error (Error.Invalid_argument "Information rows are not stored preferences")
+    | Some (Info _ | Status_action _) -> Error (Error.Invalid_argument "Status rows are not stored preferences")
     | Some i -> Ok i | None -> Error (Error.Invalid_argument "Unknown settings key")
   let get_unlocked schema ~key:k = match find schema k with Error e -> Lwt.return (Error e) | Ok item ->
     Storage.Preferences.get ~store:schema.store ~key:k >|= function
@@ -782,12 +783,13 @@ module Settings = struct
       let fields = match item with
         | Section title -> fields "section" title None
         | Info x -> fields "info" x.title (Some (Option.value (Hashtbl.find_opt information x.key) ~default:x.text))
+        | Status_action x -> fields "action" x.title (Some (Option.value (Hashtbl.find_opt information x.key) ~default:x.text))
         | Toggle x -> fields "toggle" x.title x.description
         | Text x -> ("multiline",`Bool x.multiline)::fields "text" x.title x.description
         | Integer x -> fields "integer" x.title x.description
         | Choice x -> ("options",`List (List.map (fun (v,t) -> `List [`String v;`String t]) x.options))::fields "choice" x.title x.description
         | Action x -> fields "action" x.title x.description in
-      (match item,key item with Info _,_ | _,None -> Lwt.return (Ok fields)
+      (match item,key item with (Info _ | Status_action _),_ | _,None -> Lwt.return (Ok fields)
        | _,Some k -> get_unlocked schema ~key:k >|= Result.map (fun v -> ("value",`String (value_string v))::fields)) >>= function
       | Error e -> Lwt.return (Error e) | Ok fields -> loop (`Assoc fields::acc) rest in
     loop [] schema.items
@@ -798,13 +800,15 @@ module Settings = struct
     | Error e -> Lwt.return (Error e) | Ok json -> unit_call "settings.update" [page.root;Yojson.Safe.to_string json]
   let refresh page = if not page.active then invalid "Settings page released" else
     Lwt_mutex.with_lock page.schema.lock (fun () -> refresh_unlocked page)
-  let set_info page ~key:k text =
+  let set_row_text accepts page ~key:k text =
     if not page.active then invalid "Settings page released" else
-    match List.find_opt (function Info x -> x.key=k | _ -> false) page.schema.items with
-    | None -> invalid "Unknown information row"
+    match List.find_opt (fun item -> key item=Some k && accepts item) page.schema.items with
+    | None -> invalid "Unknown status row"
     | Some _ -> Lwt_mutex.with_lock page.schema.lock (fun () ->
       if not page.active then invalid "Settings page released" else (
         Hashtbl.replace page.information k text;refresh_unlocked page))
+  let set_info = set_row_text (function Info _ -> true | _ -> false)
+  let set_summary = set_row_text (function Info _ | Status_action _ -> true | _ -> false)
   let error_message = function
     | Error.Unavailable s | Permission_denied s | Invalid_argument s | Invalid_handle s | Platform s | Protocol s -> s
     | Cancelled -> "Operation cancelled"
@@ -817,6 +821,10 @@ module Settings = struct
       (match on_resume with None -> Lwt.return (Ok ()) | Some f ->
         Lwt.catch (fun () -> f activity page) (fun exn -> Lwt.return (Error (Error.Platform (Printexc.to_string exn))))) >>= fun result ->
       report result >>= fun () -> if page.active then refresh page >>= report else Lwt.return_unit) in
+    let run_action page index run after =
+      Lwt.catch (fun () -> run activity) (fun exn -> Lwt.return (Error (Error.Platform (Printexc.to_string exn)))) >>= report >>= fun () ->
+      (if page.active then unit_call "settings.result" [page.root;index;"true";""] >>= report else Lwt.return_unit) >>= fun () ->
+      if page.active then after () else Lwt.return_unit in
     let callback args = match !page_ref,args with
       | Some page,[|"refresh";""|] when page.active -> resume page
       | Some page,[|"closed";""|] -> page.active<-false;Lwt.return_unit
@@ -825,9 +833,8 @@ module Settings = struct
         | Some n when n>=0 && n<List.length schema.items ->
           let item=List.nth schema.items n in
           (match item with
-          | Action x -> Lwt.catch (fun () -> x.run activity) (fun exn -> Lwt.return (Error (Error.Platform (Printexc.to_string exn)))) >>= (function Ok () -> Lwt.return_unit | Error e -> on_error e) >>= fun () ->
-            (if page.active then unit_call "settings.result" [page.root;index;"true";""] >|= ignore else Lwt.return_unit) >>= fun () ->
-            refresh page >>= (function Ok () -> Lwt.return_unit | Error e -> on_error e)
+          | Action x -> run_action page index x.run (fun () -> refresh page >>= report)
+          | Status_action x -> run_action page index x.run (fun () -> resume page)
           | Section _ | Info _ -> Lwt.return_unit
           | _ ->
             let k=Option.get (key item) in

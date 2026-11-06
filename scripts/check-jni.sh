@@ -7,15 +7,15 @@ project_dir=$PWD
 java_dir=$(dirname "$(dirname "$(readlink -f "$(command -v javac)")")")
 work="$project_dir/_build/jni-smoke"
 mkdir -p "$work"
-cp lib/android.ml lib/android.mli test/jni/smoke.ml test/jni/auth_smoke.ml test/jni/ui_smoke.ml test/jni/layout_smoke.ml "$work/"
+cp lib/android.ml lib/android.mli test/jni/smoke.ml test/jni/auth_smoke.ml test/jni/ui_smoke.ml test/jni/layout_smoke.ml test/jni/settings_smoke.ml "$work/"
 cd "$work"
 export OCAMLRUNPARAM=b
 ocaml_dir=$(ocamlc -where)
 cc -fPIC -Wall -Wextra -D__ANDROID__ -I"$ocaml_dir" -I"$java_dir/include" -I"$java_dir/include/linux" -c "$project_dir/lib/bridge.c" -o bridge.o
 ocamlfind ocamlopt -g -thread -package lwt.unix,yojson -c android.mli
-ocamlfind ocamlopt -g -thread -package lwt.unix,yojson -linkpkg -runtime-variant _pic -output-obj android.ml auth_smoke.ml ui_smoke.ml layout_smoke.ml smoke.ml -o runtime.o
+ocamlfind ocamlopt -g -thread -package lwt.unix,yojson -linkpkg -runtime-variant _pic -output-obj android.ml auth_smoke.ml ui_smoke.ml layout_smoke.ml settings_smoke.ml smoke.ml -o runtime.o
 lwt_dir=$(ocamlfind query lwt.unix)
 read -r -a lwt_flags <<< "$(ocamlobjinfo "$lwt_dir/lwt_unix.cmxa" | sed -n 's/^Extra C object files: //p')"
 cc -shared runtime.o bridge.o -L"$lwt_dir" "${lwt_flags[@]}" "$ocaml_dir/libthreadsnat.a" "$ocaml_dir/libunixnat.a" "$ocaml_dir/libasmrun_pic.a" -lpthread -lm -ldl -o libsmoke.so
-javac -d . "$project_dir/test/jni/Bridge.java" "$project_dir/test/jni/AuthBackend.java" "$project_dir/test/jni/UiBackend.java" "$project_dir/test/jni/LayoutBackend.java"
+javac -d . "$project_dir/test/jni/Bridge.java" "$project_dir/test/jni/AuthBackend.java" "$project_dir/test/jni/UiBackend.java" "$project_dir/test/jni/LayoutBackend.java" "$project_dir/test/jni/SettingsBackend.java"
 java -cp . org.ocaml.android.Bridge "$work/libsmoke.so" "$watchdog"

@@ -74,6 +74,33 @@ let alarm activity () =
   Android.Alarm.Screen.show activity {id="integration";notification_id=41;
     title="Alarme de test";text="Écran réutilisable";stop_label="Arrêter";snooze_label="Reporter";
     stop_handler="integration.stop";snooze_handler="integration.snooze";payload="integration"} >>= require
+let manage_health_background activity =
+  Android.Health_connect.background_read_granted () >>= function
+  | Error e -> Lwt.return (Error e)
+  | Ok true -> Android.Health_connect.open_settings activity
+  | Ok false -> Android.Health_connect.request_background_read activity >|= Result.map (fun _ -> ())
+let manage_gps_background activity =
+  Android.Permissions.check_special Background_location >>= function
+  | Error e -> Lwt.return (Error e)
+  | Ok true -> Android.Permissions.open_settings activity Background_location
+  | Ok false -> Android.Permissions.check "android.permission.ACCESS_FINE_LOCATION" >>= function
+    | Error e -> Lwt.return (Error e)
+    | Ok true -> Android.Permissions.open_settings activity Background_location
+    | Ok false -> Android.Permissions.request activity ["android.permission.ACCESS_COARSE_LOCATION";"android.permission.ACCESS_FINE_LOCATION"] >>= function
+      | Error e -> Lwt.return (Error e)
+      | Ok granted when List.mem "android.permission.ACCESS_FINE_LOCATION" granted -> Android.Permissions.open_settings activity Background_location
+      | Ok _ -> Lwt.return (Error (Android.Error.Permission_denied "Foreground location is required before background consent"))
+let refresh_permission_settings page =
+  (Android.Health_connect.background_read_available () >>= function
+  | Error e -> Lwt.return (Error e)
+  | Ok false -> Android.Settings.set_summary page ~key:"health-background" "Indisponible"
+  | Ok true -> Android.Health_connect.background_read_granted () >>= function
+    | Error e -> Lwt.return (Error e)
+    | Ok granted -> Android.Settings.set_summary page ~key:"health-background" (if granted then "Autorisé" else "Non autorisé")) >>= function
+  | Error e -> Lwt.return (Error e)
+  | Ok () -> Android.Permissions.check_special Background_location >>= function
+    | Error e -> Lwt.return (Error e)
+    | Ok granted -> Android.Settings.set_summary page ~key:"gps-background" (if granted then "Autorisé" else "Non autorisé")
 let settings_schema = match Android.Settings.define ~store:"integration-settings" [
   Section "Démonstration des réglages";
   Info {key="health-state";title="État de Health Connect";text="Vérification…"};
@@ -82,8 +109,8 @@ let settings_schema = match Android.Settings.define ~store:"integration-settings
   Integer {key="count";title="Nombre de tâches";description=None;initial=1L;
     validate=Some (fun n -> if n>0L then Ok () else Error "Un entier positif est requis")};
   Choice {key="display";title="Présentation";description=None;initial="compact";options=["compact","Compacte";"detail","Détaillée"]};
-  Action {title="Autorisation santé en arrière-plan";description=None;run=(fun activity -> health_background_permissions activity () >|= fun () -> Ok ())};
-  Action {title="Autorisation GPS en arrière-plan";description=None;run=(fun activity -> gps_background_permissions activity () >|= fun () -> Ok ())}]
+  Status_action {key="health-background";title="Santé en arrière-plan";text="Vérification…";run=manage_health_background};
+  Status_action {key="gps-background";title="GPS en arrière-plan";text="Vérification…";run=manage_gps_background}]
   with Ok schema -> schema | Error _ -> failwith "Invalid demo settings"
 let form_dialog activity () =
   Android.Form.container activity >>= require >>= fun content ->
@@ -182,14 +209,15 @@ let render activity =
 let () =
   (match Android.Settings.register ~name:"integration" settings_schema
     ~on_resume:(fun _ page ->
-      Android.Health_connect.status () >>= function
+      (Android.Health_connect.status () >>= function
       | Error e -> Lwt.return (Error e)
       | Ok Unavailable -> Android.Settings.set_info page ~key:"health-state" "Indisponible"
       | Ok Update_required -> Android.Settings.set_info page ~key:"health-state" "Mise à jour requise"
       | Ok Available -> Android.Health_connect.granted_permissions () >>= function
         | Error e -> Lwt.return (Error e)
         | Ok permissions -> Android.Settings.set_info page ~key:"health-state"
-          (Printf.sprintf "Disponible — %d familles autorisées" (List.length permissions)))
+          (Printf.sprintf "Disponible — %d familles autorisées" (List.length permissions))) >>= function
+      | Error e -> Lwt.return (Error e) | Ok () -> refresh_permission_settings page)
     ~on_change:(fun ~key _ -> status ("Réglage enregistré : "^key))
     ~on_error:(fun _ -> status "Erreur de réglage") with
     | Ok () -> () | Error _ -> failwith "Duplicate settings schema");

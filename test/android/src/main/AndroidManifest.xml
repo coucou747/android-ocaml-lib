@@ -20,7 +20,7 @@
     <meta-data android:name="android.ocaml.health.rationale_title" android:resource="@string/health_rationale_title" />
     <meta-data android:name="android.ocaml.health.rationale_text" android:resource="@string/health_rationale_text" />
     <meta-data android:name="android.ocaml.library" android:value="integration" />
-    <activity android:name="org.ocaml.android.BridgeActivity" android:exported="true" tools:replace="android:exported">
+    <activity android:name="org.ocaml.android.BridgeActivity" android:theme="@style/Theme.Material3.DayNight.NoActionBar" android:exported="true" tools:replace="android:exported">
       <intent-filter>
         <action android:name="android.intent.action.MAIN" />
         <category android:name="android.intent.category.LAUNCHER" />

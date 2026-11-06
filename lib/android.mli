@@ -32,6 +32,13 @@ module Ui : sig
   type orientation = Horizontal | Vertical
   val text : Activity.t -> string -> view response
   val button : Activity.t -> string -> view response
+  (** Material 3 filled/outlined buttons, sharing the library theme. *)
+  val primary_button : Activity.t -> string -> view response
+  val secondary_button : Activity.t -> string -> view response
+  type insets = { left_dp:int; top_dp:int; right_dp:int; bottom_dp:int }
+  val set_padding : view -> insets -> unit response
+  val set_margins : view -> insets -> unit response
+  val spacer : Activity.t -> width_dp:int -> height_dp:int -> view response
   val edit_text : Activity.t -> string -> view response
   val linear_layout : Activity.t -> orientation -> view response
   (** Vertical ScrollView: use [add] once with a LinearLayout containing the rows.
@@ -56,6 +63,56 @@ module Ui : sig
   val set_enabled : view -> bool -> unit response
   val release : view -> unit response
 end
+(** Material dialogs. Custom content remains owned by the caller and is detached
+    on dismissal. Views must belong to the same activity and have no parent. *)
+module Dialog : sig
+  type t
+  type role = Positive | Negative | Neutral
+  type button = {role:role; label:string}
+  type buttons
+  type decision = Close | Keep_open
+  type outcome = Button of role | Dismissed
+  (** At most one button per role. Empty lists are allowed for custom content. *)
+  val buttons : button list -> (buttons, Error.t) result
+  val show : Activity.t -> title:string -> content:Ui.view -> buttons:buttons ->
+    cancelable:bool -> on_button:(role -> decision response) ->
+    on_error:(Error.t -> unit Lwt.t) -> t response
+  (** Wait without occupying a native worker. Cancelling a waiter does not close
+      a custom dialog; call close explicitly. Dismissal also occurs on rotation. *)
+  val closed : t -> outcome response
+  val close : t -> unit response
+  (** Convenience dialogs use the standard Material message presentation. Cancelling these Lwt
+      promises closes the dialog. Back/outside dismissal of confirm returns false. *)
+  val alert : Activity.t -> title:string -> message:string -> button:string -> unit response
+  val confirm : Activity.t -> title:string -> message:string -> accept:string -> cancel:string -> bool response
+end
+
+module Form : sig
+  type field
+  type keyboard = Text | Email | Password | Phone | Url | Number of {signed:bool; decimal:bool}
+  type validator = string -> (unit, string) result
+  (** Material form with shared padding and row spacing, in density-independent
+      units. Add fields via view and buttons using Ui.add. Wrap in scroll_view
+      when scrolling is needed. *)
+  val container : Activity.t -> Ui.view response
+  val text_field : Activity.t -> label:string -> help:string option -> text:string ->
+    keyboard:keyboard -> multiline:bool -> validate:validator option -> field response
+  val view : field -> Ui.view
+  val get_text : field -> string response
+  val set_text : field -> string -> unit response
+  val set_help : field -> string option -> unit response
+  val set_error : field -> string option -> unit response
+  (** Calls the OCaml validator and displays its message below the field. An
+      exception in a validator becomes Error.Platform. Initial values are not
+      validated automatically. Call before submitting. *)
+  val validate : field -> bool response
+  (** Optional live validation. Reads current text, validates it, then calls the
+      callback with text and validity. Cancel the subscription or release field. *)
+  val on_change : field -> on_error:(Error.t -> unit Lwt.t) ->
+    (string -> bool -> unit Lwt.t) -> Subscription.t response
+  val release : field -> unit response
+end
+
 module Resources : sig
   type scope = Application | Android
   type kind = Drawable | Mipmap | Raw | String | Color

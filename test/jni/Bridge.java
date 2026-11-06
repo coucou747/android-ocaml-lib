@@ -36,6 +36,7 @@ public final class Bridge {
     public static byte[][] takeEvent() throws InterruptedException{return events.take();}
     public static byte[][] dispatch(byte[] op,byte[][] args){
         String name=new String(op,StandardCharsets.UTF_8);
+        if(UiBackend.handles(name,args))return UiBackend.dispatch(name,args);
         if(name.startsWith("auth.") || name.startsWith("http.") || name.startsWith("keystore."))return AuthBackend.dispatch(name,args);
         switch(name){
         case "preferences.get":{if(Arrays.equals(args[0],text("native-launch")))return ok(text("bool"),text(Boolean.toString(settingsOpened)));byte[][] v=preferences.get(new String(args[0],StandardCharsets.UTF_8)+"/"+new String(args[1],StandardCharsets.UTF_8));return v==null?ok():ok(v);}
@@ -127,7 +128,7 @@ public final class Bridge {
         case "storage.write":
             if(!locations.isEmpty())failure="Location request handle leaked";
             if(!Arrays.equals(args[1],binary))failure="Binary JNI write mismatch";
-            AuthBackend.checkClean();done.countDown();return new byte[][]{text("ok")};
+            AuthBackend.checkClean();UiBackend.checkClean();done.countDown();return new byte[][]{text("ok")};
         case "activity.lifecycle":
             events.add(new byte[][]{args[0],text("activity"),text("resumed")});
             return new byte[][]{text("ok")};

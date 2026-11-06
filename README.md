@@ -596,3 +596,17 @@ Fournir explicitement URL, délais et noms de stockage, déclarer INTERNET et co
 Digital Asset Links avec le domaine et le certificat de signature réels. Voir le
 [guide Android en OCaml](notes/AUTHENTIFICATION-ANDROID.md) pour les adaptateurs,
 les parcours, les erreurs et les exigences des APK distribués hors Play Store.
+
+## Dialogues, formulaires et présentation partagée
+
+`Android.Dialog.alert`, `confirm` et `show` fournissent des dialogues Material avec
+textes ou vues OCaml, boutons et fermeture asynchrone. Un callback peut garder un
+dialogue ouvert pendant la correction d’un formulaire.
+
+`Android.Form` fournit des champs avec libellé, aide, clavier adapté et erreur sous
+le champ. La validation reste une fonction OCaml, appelée à la soumission ou avec
+`Form.on_change`. `Form.container`, `Ui.primary_button`, `Ui.secondary_button`,
+les espaces et les insets en dp partagent les styles et ressources de la bibliothèque.
+
+Voir le [guide des interfaces OCaml](notes/INTERFACE-ANDROID.md) et la démo native
+pour un dialogue de saisie avec validation et les règles de libération des vues.

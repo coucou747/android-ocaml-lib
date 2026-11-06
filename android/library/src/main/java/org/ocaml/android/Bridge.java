@@ -56,7 +56,7 @@ public final class Bridge {
     private static <T> T get(String id, Class<T> cls) {
         Object o=objects.get(id);
         if (!cls.isInstance(o)) throw new NoSuchElementException("Invalid or expired handle: "+id);
-        if (o instanceof View && ((View)o).getContext() instanceof Activity && ((Activity)((View)o).getContext()).isDestroyed())
+        if (o instanceof View && UiSupport.owner(((View)o).getContext())!=null && UiSupport.owner(((View)o).getContext()).isDestroyed())
             throw new NoSuchElementException("Activity destroyed");
         return cls.cast(o);
     }
@@ -82,10 +82,10 @@ public final class Bridge {
         if(event.equals("resumed")) current=a;
         if(!(a instanceof SettingsActivity))for(String sub:lifecycle) emit(sub,a.bridgeId,event);
         if(event.equals("destroyed")) {
-            AuthenticationSupport.cancelFor(a);
+            AuthenticationSupport.cancelFor(a);DialogSupport.closeFor(a);
             if(current==a) current=null;
-            for(Map.Entry<String,View> e:subscriptionViews.entrySet()) if(e.getValue().getContext()==a) cleanupSubscription(e.getKey());
-            objects.entrySet().removeIf(e -> e.getValue()==a || (e.getValue() instanceof View && ((View)e.getValue()).getContext()==a));
+            for(Map.Entry<String,View> e:subscriptionViews.entrySet()) if(UiSupport.owner(e.getValue().getContext())==a) cleanupSubscription(e.getKey());
+            objects.entrySet().removeIf(e -> e.getValue()==a || (e.getValue() instanceof View && UiSupport.owner(((View)e.getValue()).getContext())==a) || (e.getValue() instanceof DialogSupport && ((DialogSupport)e.getValue()).owner==a));
         }
     }
     static void emit(String id,Object... values) {
@@ -156,7 +156,7 @@ public final class Bridge {
                     view=get(a[0],ImageView.class);view.setImageBitmap(bitmap);return ok();
                 });}catch(Exception e){bitmap.recycle();throw e;}
             }
-            if(op.startsWith("settings.") || op.startsWith("ui.") || op.startsWith("events.") || op.startsWith("activity.") || op.equals("permissions.settings"))
+            if(op.startsWith("form.") || op.startsWith("dialog.") || op.startsWith("settings.") || op.startsWith("ui.") || op.startsWith("events.") || op.startsWith("activity.") || op.equals("permissions.settings"))
                 return ui(()->execute(op,a,bytes));
             if(op.equals("camera.capture")) {
                 CompletableFuture<String[]> result=ui(()->PhotoCaptureActivity.capture(get(a[0],Activity.class),a[1]));
@@ -221,6 +221,25 @@ public final class Bridge {
         case "auth.baseUrl":return ok(AuthenticationSupport.base(a[0]).toASCIIString());
         case "auth.resolveUrl":return ok(AuthenticationSupport.resolve(a[0],a[1]));
         case "auth.pathSegment":return ok(Uri.encode(a[0]));
+        case "dialog.show":case "dialog.message":{
+            Activity owner=get(a[1],Activity.class);boolean message=op.equals("dialog.message");
+            View content=message?new View(owner):get(a[3],View.class);DialogSupport dialog=new DialogSupport(owner,content,a,message);
+            ownSubscription(a[0],content);subscriptions.put(a[0],dialog::close);return ok(put(dialog));
+        }
+        case "dialog.close":{Object dialog=objects.remove(a[0]);if(dialog instanceof DialogSupport)((DialogSupport)dialog).close();return ok();}
+        case "dialog.resolve":{Object dialog=objects.get(a[0]);if(dialog instanceof DialogSupport)((DialogSupport)dialog).resolve(a[1],Boolean.parseBoolean(a[2]));return ok();}
+        case "form.container":return ok(put(new UiComponents.Form(get(a[0],Activity.class))));
+        case "form.field":{
+            UiComponents.Field field=new UiComponents.Field(get(a[0],Activity.class),a[1],Boolean.parseBoolean(a[2])?a[3]:null,a[4],a[5],Boolean.parseBoolean(a[6]),Boolean.parseBoolean(a[7]),Boolean.parseBoolean(a[8]));
+            return ok(put(field),put(field.input));
+        }
+        case "form.help":get(a[0],UiComponents.Field.class).setHelperText(Boolean.parseBoolean(a[1])?a[2]:null);return ok();
+        case "form.error":get(a[0],UiComponents.Field.class).setError(Boolean.parseBoolean(a[1])?a[2]:null);return ok();
+        case "ui.primaryButton":return ok(put(UiComponents.button(get(a[0],Activity.class),a[1],true)));
+        case "ui.secondaryButton":return ok(put(UiComponents.button(get(a[0],Activity.class),a[1],false)));
+        case "ui.spacer":return ok(put(UiComponents.spacer(get(a[0],Activity.class),Integer.parseInt(a[1]),Integer.parseInt(a[2]))));
+        case "ui.padding":UiComponents.padding(get(a[0],View.class),Integer.parseInt(a[1]),Integer.parseInt(a[2]),Integer.parseInt(a[3]),Integer.parseInt(a[4]));return ok();
+        case "ui.margins":UiComponents.margins(get(a[0],View.class),Integer.parseInt(a[1]),Integer.parseInt(a[2]),Integer.parseInt(a[3]),Integer.parseInt(a[4]));return ok();
         case "settings.open": SettingsActivity.open(get(a[0],Activity.class));return ok();
         case "settings.create": {
             SettingsSupport page=new SettingsSupport(get(a[1],Activity.class),a[0],a[2]);
@@ -292,14 +311,23 @@ public final class Bridge {
         case "ui.add": {
             ViewGroup parent=get(a[0],ViewGroup.class);View child=get(a[1],View.class);
             if(parent instanceof ScrollView && parent.getChildCount()!=0)throw new IllegalArgumentException("ScrollView accepts one direct child");
-            if(parent.getContext()!=child.getContext())throw new IllegalArgumentException("Views belong to different activities");
+            if(!UiSupport.sameOwner(parent.getContext(),child.getContext()))throw new IllegalArgumentException("Views belong to different activities");
             parent.addView(child);return ok();
         }
         case "ui.show": get(a[0],Activity.class).setContentView(get(a[1],View.class)); return ok();
         case "ui.setText": get(a[0],TextView.class).setText(a[1]); return ok();
         case "ui.getText": return ok(get(a[0],TextView.class).getText().toString());
         case "ui.enabled": get(a[0],View.class).setEnabled(Boolean.parseBoolean(a[1])); return ok();
-        case "ui.release": {View v=get(a[0],View.class); for(Map.Entry<String,View> e:subscriptionViews.entrySet())if(e.getValue()==v)cleanupSubscription(e.getKey()); if(v.getParent() instanceof ViewGroup) ((ViewGroup)v.getParent()).removeView(v);if(v instanceof ImageView)((ImageView)v).setImageDrawable(null);objects.remove(a[0]);return ok();}
+        case "ui.release": {
+            View root=get(a[0],View.class);
+            for(Map.Entry<String,View> e:subscriptionViews.entrySet())if(UiSupport.contains(root,e.getValue()))cleanupSubscription(e.getKey());
+            ArrayList<String> handles=new ArrayList<>();for(Map.Entry<String,Object> entry:objects.entrySet())
+                if(entry.getValue() instanceof View && UiSupport.contains(root,(View)entry.getValue())){
+                    if(entry.getValue() instanceof ImageView)((ImageView)entry.getValue()).setImageDrawable(null);handles.add(entry.getKey());
+                }
+            if(root.getParent() instanceof ViewGroup)((ViewGroup)root.getParent()).removeView(root);
+            for(String handle:handles)objects.remove(handle);return ok();
+        }
         case "events.click": {View v=get(a[1],View.class);reserveListener(a[1],"click",a[0]);v.setOnClickListener(w->emit(a[0]));ownSubscription(a[0],v);subscriptions.put(a[0],()->v.setOnClickListener(null));return ok();}
         case "events.touch": {View v=get(a[1],View.class);reserveListener(a[1],"touch",a[0]);v.setOnTouchListener((w,e)->{emit(a[0],e.getActionMasked(),e.getX(),e.getY());return Boolean.parseBoolean(a[2]);});ownSubscription(a[0],v);subscriptions.put(a[0],()->v.setOnTouchListener(null));return ok();}
         case "events.text": {TextView v=get(a[1],TextView.class);TextWatcher t=new TextWatcher(){public void beforeTextChanged(CharSequence s,int start,int count,int after){} public void onTextChanged(CharSequence s,int start,int before,int count){emit(a[0],s.toString());}public void afterTextChanged(Editable e){}};v.addTextChangedListener(t);ownSubscription(a[0],v);subscriptions.put(a[0],()->v.removeTextChangedListener(t));return ok();}

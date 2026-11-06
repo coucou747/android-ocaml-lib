@@ -84,6 +84,17 @@ module Ui = struct
   type orientation = Horizontal | Vertical
   let text a label = one "ui.text" [a; label]
   let button a label = one "ui.button" [a; label]
+  let primary_button a label = one "ui.primaryButton" [a;label]
+  let secondary_button a label = one "ui.secondaryButton" [a;label]
+  type insets = {left_dp:int;top_dp:int;right_dp:int;bottom_dp:int}
+  let dimensions_valid values = List.for_all (fun n -> n>=0 && n<=Int32.to_int Int32.max_int) values
+  let insets_call command view insets =
+    let values=[insets.left_dp;insets.top_dp;insets.right_dp;insets.bottom_dp] in
+    if not (dimensions_valid values) then invalid "Expected nonnegative Android layout dimensions" else unit_call command (view::List.map s values)
+  let set_padding = insets_call "ui.padding"
+  let set_margins = insets_call "ui.margins"
+  let spacer a ~width_dp ~height_dp = if not (dimensions_valid [width_dp;height_dp]) then invalid "Expected nonnegative Android spacer dimensions"
+    else one "ui.spacer" [a;s width_dp;s height_dp]
   let edit_text a text = one "ui.edit" [a; text]
   let linear_layout a orientation = one "ui.layout" [a; (match orientation with Horizontal -> "horizontal" | Vertical -> "vertical")]
   let scroll_view a = one "ui.scroll" [a]
@@ -108,6 +119,60 @@ module Ui = struct
   let set_enabled v b = unit_call "ui.enabled" [v; string_of_bool b]
   let release v = unit_call "ui.release" [v]
 end
+
+module Dialog = struct
+  type role = Positive | Negative | Neutral
+  type button = {role:role;label:string}
+  type buttons = button list
+  type decision = Close | Keep_open
+  type outcome = Button of role | Dismissed
+  type t = {id:string; subscription:Subscription.t; closed:outcome response; wake:(outcome,Error.t) result Lwt.u; mutable finished:bool}
+  let name = function Positive -> "positive" | Negative -> "negative" | Neutral -> "neutral"
+  let role = function "positive" -> Some Positive | "negative" -> Some Negative | "neutral" -> Some Neutral | _ -> None
+  let buttons buttons =
+    if List.length buttons>3 || List.exists (fun b -> b.label="") buttons ||
+      List.length (List.sort_uniq compare (List.map (fun b -> b.role) buttons))<>List.length buttons
+    then Error (Error.Invalid_argument "Dialog buttons need unique roles and nonempty labels") else Ok buttons
+  let close dialog = unit_call "dialog.close" [dialog.id]
+  let closed dialog = Lwt.protected dialog.closed
+  let show_impl command activity ~title ~content ~buttons ~cancelable ~on_button ~on_error =
+    let target=ref None and early=ref [] in
+    let finish dialog result = if dialog.finished then Lwt.return_unit else (
+      dialog.finished<-true;
+      close dialog >>= fun disposed -> Subscription.cancel dialog.subscription >>= fun cancelled ->
+      let result=match disposed,cancelled with Error e,_ | _,Error e -> Error e | _ -> result in
+      if Lwt.is_sleeping dialog.closed then Lwt.wakeup_later dialog.wake result;
+      Lwt.return_unit) in
+    let handle dialog = function
+      | [|"closed";reason|] -> finish dialog (match role reason with Some r -> Ok (Button r) | None -> Ok Dismissed)
+      | [|"button";value|] when not dialog.finished ->
+        (match role value with None -> finish dialog (Error (Error.Protocol "Dialog button role")) | Some r ->
+          Lwt.catch (fun () -> on_button r) (fun exn -> Lwt.return (Error (Error.Platform (Printexc.to_string exn)))) >>= fun decision ->
+          if dialog.finished then Lwt.return_unit else
+          unit_call "dialog.resolve" [dialog.id;name r;(match decision with Ok Close -> "true" | _ -> "false")] >>= function
+          | Error e -> finish dialog (Error e)
+          | Ok () -> (match decision with Error e -> on_error e | _ -> Lwt.return_unit))
+      | _ -> Lwt.return_unit in
+    let subscription=Subscription.create (fun event -> match !target with None -> early:=event::!early;Lwt.return_unit | Some d -> handle d event) in
+    Lwt.no_cancel (one command ([subscription.id;activity;title;content;string_of_bool cancelable] @
+      List.concat_map (fun b -> [name b.role;b.label]) buttons) >>= function
+    | Error e -> Subscription.cancel subscription >|= fun _ -> Error e
+    | Ok id ->
+      let promise,wake=Lwt.wait () in
+      let dialog={id;subscription;closed=promise;wake;finished=false} in target:=Some dialog;
+      Lwt_list.iter_s (handle dialog) (List.rev !early) >|= fun () -> Ok dialog)
+  let show = show_impl "dialog.show"
+  let message_dialog activity ~title ~message button_list =
+    match buttons button_list with Error e -> Lwt.return (Error e) | Ok buttons ->
+    show_impl "dialog.message" activity ~title ~content:message ~buttons ~cancelable:true
+      ~on_button:(fun _ -> Lwt.return (Ok Close)) ~on_error:(fun _ -> Lwt.return_unit) >>= function
+    | Error e -> Lwt.return (Error e)
+    | Ok dialog -> Lwt.finalize (fun () -> closed dialog) (fun () -> close dialog >|= ignore)
+  let alert activity ~title ~message ~button = message_dialog activity ~title ~message [{role=Positive;label=button}] >|= Result.map (fun _ -> ())
+  let confirm activity ~title ~message ~accept ~cancel = message_dialog activity ~title ~message [{role=Positive;label=accept};{role=Negative;label=cancel}]
+    >|= Result.map (function Button Positive -> true | _ -> false)
+end
+
 
 module Resources = struct
   type scope = Application | Android
@@ -137,6 +202,44 @@ module Events = struct
     | [|a; x; y|] -> (match int_of_string_opt a, float_of_string_opt x, float_of_string_opt y with
       | Some action, Some x, Some y -> f {action; x; y} | _ -> Lwt.return_unit)
     | _ -> Lwt.return_unit)
+end
+
+module Form = struct
+  type keyboard = Text | Email | Password | Phone | Url | Number of {signed:bool;decimal:bool}
+  type validator = string -> (unit,string) result
+  type field = {root:Ui.view;input:Ui.view;validator:validator option;lock:Lwt_mutex.t;mutable active:bool}
+  let container activity = one "form.container" [activity]
+  let text_field activity ~label ~help ~text ~keyboard ~multiline ~validate =
+    let kind,signed,decimal=match keyboard with Text -> "text",false,false | Email -> "email",false,false | Password -> "password",false,false
+      | Phone -> "phone",false,false | Url -> "url",false,false | Number x -> "number",x.signed,x.decimal in
+    if label="" || (multiline && keyboard<>Text) then invalid "Field requires a label; multiline requires Text keyboard" else
+    Lwt.no_cancel (call "form.field" [activity;label;string_of_bool (Option.is_some help);Option.value help ~default:"";text;kind;string_of_bool signed;string_of_bool decimal;string_of_bool multiline]) >|= function
+    | Error e -> Error e | Ok [|root;input|] -> Ok {root;input;validator=validate;lock=Lwt_mutex.create ();active=true}
+    | Ok _ -> Error (Error.Protocol "Form field handles")
+  let view field = field.root
+  let with_field field f = Lwt_mutex.with_lock field.lock (fun () -> if field.active then f () else Lwt.return (Error (Error.Invalid_handle "Form field released")))
+  let get_text field = with_field field (fun () -> Ui.get_text field.input)
+  let set_text field text = with_field field (fun () -> Ui.set_text field.input text)
+  let optional command field value = with_field field (fun () -> unit_call command [field.root;string_of_bool (Option.is_some value);Option.value value ~default:""])
+  let set_help = optional "form.help"
+  let set_error = optional "form.error"
+  let validate_current field = with_field field (fun () ->
+    Ui.get_text field.input >>= function Error e -> Lwt.return (Error e) | Ok text ->
+    let validation=try Ok (match field.validator with None -> Ok () | Some validator -> validator text)
+      with exn -> Error (Error.Platform (Printexc.to_string exn)) in
+    match validation with Error e -> Lwt.return (Error e) | Ok validation ->
+    let error=match validation with Ok () -> None | Error message -> Some message in
+    unit_call "form.error" [field.root;string_of_bool (Option.is_some error);Option.value error ~default:""]
+      >|= Result.map (fun () -> text,Result.is_ok validation))
+  let validate field = validate_current field >|= Result.map snd
+  let on_change field ~on_error callback =
+    if not field.active then Lwt.return (Error (Error.Invalid_handle "Form field released")) else
+    Events.on_text_changed field.input (fun _ -> if not field.active then Lwt.return_unit else
+      validate_current field >>= function
+      | Error e -> if field.active then on_error e else Lwt.return_unit
+      | Ok (text,valid) -> if field.active then callback text valid else Lwt.return_unit)
+  let release field = Lwt.no_cancel (Lwt_mutex.with_lock field.lock (fun () ->
+    if not field.active then Lwt.return (Ok ()) else (field.active<-false;Ui.release field.root >|= function Error (Error.Invalid_handle _) -> Ok () | result -> result)))
 end
 
 module Permissions = struct

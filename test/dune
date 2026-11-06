@@ -12,3 +12,8 @@
  (name test_authentication)
  (modules test_authentication)
  (libraries android-ocaml-lib lwt.unix))
+
+(test
+ (name test_ui_components)
+ (modules test_ui_components)
+ (libraries android-ocaml-lib lwt.unix))

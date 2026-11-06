@@ -12,6 +12,18 @@ import java.io.*;
 /** Platform decoding and input configuration, without an image-loading dependency. */
 final class UiSupport {
     private UiSupport() {}
+    static android.app.Activity owner(Context context){
+        while(context instanceof android.content.ContextWrapper){
+            if(context instanceof android.app.Activity)return (android.app.Activity)context;
+            Context base=((android.content.ContextWrapper)context).getBaseContext();if(base==context)break;context=base;
+        }
+        return context instanceof android.app.Activity?(android.app.Activity)context:null;
+    }
+    static boolean sameOwner(Context a,Context b){android.app.Activity owner=owner(a);return owner==null?a==b:owner==owner(b);}
+    static boolean contains(android.view.View root,android.view.View child){
+        for(android.view.View current=child;;){if(current==root)return true;
+            if(!(current.getParent() instanceof android.view.View))return false;current=(android.view.View)current.getParent();}
+    }
     static Bitmap image(Context context,String value,int width,int height) throws IOException {
         if(width<=0 || height<=0)throw new IllegalArgumentException("Positive image bounds required");
         Uri uri=Uri.parse(value);

@@ -119,6 +119,52 @@ public final class BindingInstrumentation extends Instrumentation {
             check(screen.isFinishing() || screen.isDestroyed(),"Alarm screen dismissed");
         } finally {removeMonitor(monitor);}
     }
+    private void componentTests(String owner) throws Exception {
+        String form=value("form.container",owner),label=value("ui.text",owner,"Form title");
+        byte[][] field=ok("form.field",owner,"Email","true","Helper","","email","false","false","false");
+        String root=new String(field[1],StandardCharsets.UTF_8),input=new String(field[2],StandardCharsets.UTF_8);
+        com.google.android.material.textfield.TextInputLayout material=nativeView(root,com.google.android.material.textfield.TextInputLayout.class);
+        android.widget.EditText editor=nativeView(input,android.widget.EditText.class);
+        String primary=value("ui.primaryButton",owner,"Save"),secondary=value("ui.secondaryButton",owner,"Cancel");
+        check(nativeView(primary,android.view.View.class) instanceof com.google.android.material.button.MaterialButton,"Material primary button");
+        check(nativeView(secondary,android.view.View.class) instanceof com.google.android.material.button.MaterialButton,"Material secondary button");
+        ok("ui.add",form,label);ok("ui.margins",root,"1","12","3","4");ok("ui.add",form,root);ok("ui.add",form,primary);ok("ui.add",form,secondary);
+        onUi(()->{
+            check("Email".contentEquals(material.getHint()) && "Helper".contentEquals(material.getHelperText()),"Label and helper below field");
+            check((editor.getInputType()&android.text.InputType.TYPE_MASK_VARIATION)==android.text.InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS,"Email keyboard");
+            float density=material.getResources().getDisplayMetrics().density;
+            android.view.ViewGroup.MarginLayoutParams margins=(android.view.ViewGroup.MarginLayoutParams)material.getLayoutParams();
+            check(margins.topMargin==Math.round(12*density) && margins.leftMargin==Math.round(density),"Explicit margins survive addition to form");
+            android.view.ViewGroup.MarginLayoutParams automatic=(android.view.ViewGroup.MarginLayoutParams)nativeView(primary,android.view.View.class).getLayoutParams();
+            int gap=getTargetContext().getResources().getDimensionPixelSize(getTargetContext().getResources().getIdentifier("ocaml_form_gap","dimen",getTargetContext().getPackageName()));
+            check(automatic.topMargin==gap,"Shared form row spacing");return null;
+        });
+        ok("form.error",root,"true","Invalid email");
+        onUi(()->{check("Invalid email".contentEquals(material.getError()) && editor.getError()==null,"Error uses supporting text, not EditText popup");return null;});
+        ok("form.error",root,"false","");ok("form.help",root,"false","");
+        onUi(()->{check(material.getError()==null && material.getHelperText()==null,"Helper/error clearing");return null;});
+        check(new String(call("ui.spacer",owner,"-1","0")[1],StandardCharsets.UTF_8).equals("argument"),"Native dimension validation");
+        String dialog=value("dialog.show","ui-dialog-test",owner,"Custom form",form,"true","positive","Save","negative","Cancel");
+        Object nativeDialog=nativeView(dialog,Object.class);
+        java.lang.reflect.Field dialogField=nativeDialog.getClass().getDeclaredField("dialog");dialogField.setAccessible(true);
+        androidx.appcompat.app.AlertDialog shown=(androidx.appcompat.app.AlertDialog)dialogField.get(nativeDialog);
+        onUi(()->{shown.getButton(android.content.DialogInterface.BUTTON_POSITIVE).performClick();
+            check(shown.isShowing() && !shown.getButton(android.content.DialogInterface.BUTTON_POSITIVE).isEnabled(),"Button waits for OCaml validation");return null;});
+        ok("dialog.resolve",dialog,"positive","false");
+        onUi(()->{check(shown.isShowing() && shown.getButton(android.content.DialogInterface.BUTTON_POSITIVE).isEnabled(),"Keep_open reenables dialog");return null;});
+        ok("dialog.resolve",dialog,"positive","true");
+        onUi(()->{check(!shown.isShowing() && material.getParent()!=null && nativeView(form,android.view.View.class).getParent()==null,"Dismiss detaches reusable OCaml content");return null;});
+        ok("dialog.close",dialog);ok("dialog.close",dialog);ok("unsubscribe","ui-dialog-test");
+        ok("events.text","ui-field-test",input);ok("ui.release",form);
+        check(new String(call("ui.getText",input)[1],StandardCharsets.UTF_8).equals("handle"),"Releasing form invalidates descendant input handles");
+        java.lang.reflect.Field listeners=Bridge.class.getDeclaredField("subscriptionViews");listeners.setAccessible(true);
+        check(!((java.util.Map<?,?>)listeners.get(null)).containsKey("ui-field-test"),"Releasing form removes descendant subscriptions");
+        String content=value("form.container",owner);
+        String dismissed=value("dialog.show","ui-dismiss-test",owner,"Dismiss",content,"true","positive","OK");
+        Object n=nativeView(dismissed,Object.class);androidx.appcompat.app.AlertDialog d=(androidx.appcompat.app.AlertDialog)dialogField.get(n);
+        onUi(()->{d.cancel();check(!d.isShowing() && nativeView(content,android.view.View.class).getParent()==null,"System cancellation detaches content");return null;});
+        ok("dialog.close",dismissed);ok("unsubscribe","ui-dismiss-test");ok("ui.release",content);
+    }
     private void authenticationTests() throws Exception {
         org.ocaml.android.AuthenticationChecks.run(getTargetContext());
         String name="auth-"+java.util.UUID.randomUUID(),alias=name+"-key";
@@ -233,6 +279,7 @@ public final class BindingInstrumentation extends Instrumentation {
             check(Arrays.equals(ok("keystore.decrypt","integration",encrypted)[1],binary),"Keystore roundtrip");
             ok("keystore.delete","integration");ok("storage.remove","roundtrip.bin");
             ok("preferences.remove","integration","answer");
+            componentTests(owner);
             authenticationTests();
             healthLocationTests(owner);
             final Activity settingsOwner=activity;onUi(()->{org.ocaml.android.SettingsChecks.run(settingsOwner);return null;});

@@ -1,0 +1,11 @@
+<resources>
+  <!-- Shared Material form rhythm; applications can override these resources. -->
+  <dimen name="ocaml_form_padding">16dp</dimen>
+  <dimen name="ocaml_form_gap">8dp</dimen>
+  <style name="OcamlPrimaryButtonTheme">
+    <item name="materialButtonStyle">@style/Widget.Material3.Button</item>
+  </style>
+  <style name="OcamlSecondaryButtonTheme">
+    <item name="materialButtonStyle">@style/Widget.Material3.Button.OutlinedButton</item>
+  </style>
+</resources>

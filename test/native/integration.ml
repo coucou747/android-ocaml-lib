@@ -77,32 +77,52 @@ let settings_schema = match Android.Settings.define ~store:"integration-settings
   Action {title="Autorisation santé en arrière-plan";description=None;run=(fun activity -> health_background_permissions activity () >|= fun () -> Ok ())};
   Action {title="Autorisation GPS en arrière-plan";description=None;run=(fun activity -> gps_background_permissions activity () >|= fun () -> Ok ())}]
   with Ok schema -> schema | Error _ -> failwith "Invalid demo settings"
+let form_dialog activity () =
+  Android.Form.container activity >>= require >>= fun content ->
+  Android.Form.text_field activity ~label:"Nom de la tâche" ~help:(Some "Ce nom est obligatoire") ~text:""
+    ~keyboard:Text ~multiline:false ~validate:(Some (fun text -> if String.trim text="" then Error "Saisir un nom" else Ok ())) >>= require >>= fun field ->
+  Android.Ui.add content (Android.Form.view field) >>= require >>= fun () ->
+  let buttons=match Android.Dialog.buttons [{role=Positive;label="Enregistrer"};{role=Negative;label="Annuler"}] with Ok b -> b | Error _ -> assert false in
+  Lwt.finalize (fun () ->
+    Android.Dialog.show activity ~title:"Nouvelle tâche" ~content ~buttons ~cancelable:true
+      ~on_error:(fun _ -> status "Erreur du formulaire")
+      ~on_button:(function
+        | Positive -> Android.Form.validate field >>= require >|= fun valid -> Ok (if valid then Android.Dialog.Close else Keep_open)
+        | _ -> Lwt.return (Ok Android.Dialog.Close)) >>= require >>= fun dialog ->
+    Android.Dialog.closed dialog >>= require >>= function
+      | Button Positive -> Android.Form.get_text field >>= require >>= fun text -> status ("Tâche enregistrée : "^text)
+      | _ -> status "Saisie annulée")
+    (fun () -> Android.Form.release field >>= fun _ -> Android.Ui.release content >|= ignore)
+let confirm_action activity () =
+  Android.Dialog.confirm activity ~title:"Confirmation" ~message:"Confirmer cette action de démonstration ?" ~accept:"Confirmer" ~cancel:"Annuler" >>= require >>= fun accepted ->
+  status (if accepted then "Action confirmée" else "Action annulée")
+let alert_action activity () = Android.Dialog.alert activity ~title:"Information" ~message:"Dialogue standard partagé par les applications OCaml." ~button:"Fermer" >>= require
 let render activity =
   Android.Ui.scroll_view activity >>= require >>= fun scroll ->
-  Android.Ui.linear_layout activity Android.Ui.Vertical >>= require >>= fun layout ->
+  Android.Form.container activity >>= require >>= fun layout ->
   Android.Ui.add scroll layout >>= require >>= fun () ->
   Android.Ui.text activity !message >>= require >>= fun label ->
   Android.Ui.linear_layout activity Android.Ui.Vertical >>= require >>= fun preview_slot ->
   let ui={activity;layout=preview_slot;label;preview=None} in screen := Some ui;
-  Android.Ui.edit_text activity "" >>= require >>= fun number ->
-  Android.Ui.set_input_type number (Number {signed=false;decimal=false}) >>= require >>= fun () ->
-  Android.Ui.set_hint number "Nombre de tâches" >>= require >>= fun () ->
-  Android.Ui.edit_text activity "" >>= require >>= fun notes ->
-  Android.Ui.set_multiline notes true >>= require >>= fun () ->
-  Android.Ui.set_hint notes "Description sur plusieurs lignes" >>= require >>= fun () ->
-  Lwt_list.iter_s (fun child -> Android.Ui.add layout child >>= require) [label;number;notes] >>= fun () ->
-  Android.Events.on_text_changed number (fun text ->
-    Android.Ui.set_error number (if String.trim text = "" then Some "Champ requis" else None) >>= require) >>= require >>= fun _ ->
+  Android.Form.text_field activity ~label:"Nombre de tâches" ~help:(Some "Saisir un entier positif") ~text:""
+    ~keyboard:(Number {signed=false;decimal=false}) ~multiline:false
+    ~validate:(Some (fun text -> match int_of_string_opt text with Some n when n>0 -> Ok () | _ -> Error "Entier positif requis")) >>= require >>= fun number ->
+  Android.Form.text_field activity ~label:"Description" ~help:None ~text:"" ~keyboard:Text ~multiline:true ~validate:None >>= require >>= fun notes ->
+  Lwt_list.iter_s (fun child -> Android.Ui.add layout child >>= require) [label;Android.Form.view number;Android.Form.view notes] >>= fun () ->
+  Android.Form.on_change number ~on_error:(fun _ -> status "Erreur de validation") (fun _ _ -> Lwt.return_unit) >>= require >>= fun _ ->
+  Android.Ui.primary_button activity "Nouvelle tâche" >>= require >>= fun create ->
+  Android.Ui.add layout create >>= require >>= fun () ->
+  Android.Events.on_click create (form_dialog activity) >>= require >>= fun _ ->
   Lwt_list.iter_s (fun (label,callback) ->
-    Android.Ui.button activity label >>= require >>= fun button ->
+    Android.Ui.secondary_button activity label >>= require >>= fun button ->
     Android.Ui.add layout button >>= require >>= fun () ->
     Android.Events.on_click button callback >>= require >|= fun _ -> ())
-    ["Prendre une photo",capture activity; "Écran d’alarme",alarm activity; "Date, son et ressource",local_status;
+    ["Dialogue d’information",alert_action activity; "Confirmer une action",confirm_action activity; "Prendre une photo",capture activity; "Écran d’alarme",alarm activity; "Date, son et ressource",local_status;
      "Health Connect : état",health_status; "Health Connect : autorisations",health_permissions activity;
      "Health Connect : accès en arrière-plan",health_background_permissions activity;
      "GPS : autorisation en arrière-plan",gps_background_permissions activity;
      "GPS : autorisations et cache",gps_status activity; "Arrêter le suivi GPS",(fun () -> Android.Location.stop_tracking_service () >>= require)] >>= fun () ->
-  Android.Ui.button activity "Réglages" >>= require >>= fun settings_button ->
+  Android.Ui.secondary_button activity "Réglages" >>= require >>= fun settings_button ->
   Android.Ui.add layout settings_button >>= require >>= fun () ->
   Android.Events.on_click settings_button (fun () -> Android.Settings.open_ activity >>= require) >>= require >>= fun _ ->
   Android.Ui.add layout preview_slot >>= require >>= fun () ->

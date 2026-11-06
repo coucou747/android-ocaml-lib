@@ -79,7 +79,7 @@ public final class AlarmScreenActivity extends Activity {
         TextView text=new TextView(this);text.setText(config[3]);layout.addView(text);
         Button stop=new Button(this);stop.setText(config[4]);stop.setOnClickListener(v->choose("stop"));layout.addView(stop);
         Button snooze=new Button(this);snooze.setText(config[5]);snooze.setOnClickListener(v->choose("snooze"));layout.addView(snooze);
-        setContentView(layout);
+        SystemBarInsets.apply(layout);setContentView(layout);
     }
     private void choose(String action){
         if(handled){finish();return;}

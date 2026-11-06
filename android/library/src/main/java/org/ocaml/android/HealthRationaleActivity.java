@@ -20,6 +20,6 @@ public final class HealthRationaleActivity extends Activity {
         CharSequence[] texts=texts(this);setTitle(texts[0]);LinearLayout layout=new LinearLayout(this);layout.setOrientation(LinearLayout.VERTICAL);
         TextView text=new TextView(this);text.setText(texts[1]);layout.addView(text);
         Button close=new Button(this);close.setText(android.R.string.ok);close.setOnClickListener(v->finish());layout.addView(close);
-        ScrollView scroll=new ScrollView(this);scroll.addView(layout);setContentView(scroll);
+        ScrollView scroll=new ScrollView(this);scroll.addView(layout);SystemBarInsets.apply(scroll);setContentView(scroll);
     }catch(Exception e){android.util.Log.e("OCaml","Health rationale configuration missing",e);finish();}}
 }

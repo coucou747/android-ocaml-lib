@@ -9,6 +9,30 @@ import androidx.core.view.*;
 /** Synthetic insets exercise repeat calls, base padding and keyboard propagation. */
 public final class SystemBarInsetsChecks {
     private static void check(boolean value,String message){if(!value)throw new AssertionError(message);}
+    /** Check the actual content root of a library-owned activity. */
+    public static void screen(Activity activity){
+        android.view.ViewGroup content=activity.findViewById(android.R.id.content);
+        check(content.getChildCount()==1,"Screen has one content root");
+        View root=content.getChildAt(0);
+        Object tag=root.getTag(R.id.ocaml_system_bar_insets);
+        check(tag instanceof OnApplyWindowInsetsListener,activity.getClass().getSimpleName()+" handles system bar insets on its root");
+        OnApplyWindowInsetsListener listener=(OnApplyWindowInsetsListener)tag;
+        WindowInsetsCompat original=ViewCompat.getRootWindowInsets(root);
+        try{
+            listener.onApplyWindowInsets(root,new WindowInsetsCompat.Builder().build());
+            int top=root.getPaddingTop(),bottom=root.getPaddingBottom();
+            WindowInsetsCompat bars=new WindowInsetsCompat.Builder()
+                .setInsets(WindowInsetsCompat.Type.statusBars(),Insets.of(0,31,0,0))
+                .setInsets(WindowInsetsCompat.Type.navigationBars(),Insets.of(0,0,0,47)).build();
+            listener.onApplyWindowInsets(root,bars);
+            check(root.getPaddingTop()==top+31 && root.getPaddingBottom()==bottom+47,"Screen keeps content inside both system bars");
+            listener.onApplyWindowInsets(root,bars);
+            check(root.getPaddingTop()==top+31 && root.getPaddingBottom()==bottom+47,"Screen insets do not accumulate");
+        }finally{
+            if(original!=null)listener.onApplyWindowInsets(root,original);
+            ViewCompat.requestApplyInsets(root);
+        }
+    }
     public static void run(Activity owner){
         View root=new FrameLayout(owner);root.setPadding(3,5,4,7);
         SystemBarInsets.apply(root);

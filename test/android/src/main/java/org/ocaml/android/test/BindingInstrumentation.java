@@ -109,12 +109,13 @@ public final class BindingInstrumentation extends Instrumentation {
         check(new String(call("camera.capture",owner,"../escape.jpg")[1],StandardCharsets.UTF_8).equals("argument"),"Photo path traversal rejected");
         check(new String(call("camera.read","content://other/secret")[1],StandardCharsets.UTF_8).equals("argument"),"Foreign provider rejected");
     }
-    private void alarmScreenTests(String owner) {
+    private void alarmScreenTests(String owner) throws Exception {
         ActivityMonitor monitor=addMonitor("org.ocaml.android.AlarmScreenActivity",null,false);
         try {
             ok("alarm.screen.show",owner,"instrumentation",41,"Alarm","Test","Stop","Snooze","integration.stop","integration.snooze","payload");
             Activity screen=monitor.waitForActivity();waitForIdleSync();
             check(screen instanceof org.ocaml.android.AlarmScreenActivity,"Alarm activity displayed");
+            onUi(()->{org.ocaml.android.SystemBarInsetsChecks.screen(screen);return null;});
             ok("alarm.screen.dismiss","instrumentation",41);waitForIdleSync();
             check(screen.isFinishing() || screen.isDestroyed(),"Alarm screen dismissed");
         } finally {removeMonitor(monitor);}
@@ -217,6 +218,7 @@ public final class BindingInstrumentation extends Instrumentation {
         ok("location.serviceStop");
         Activity rationale=startActivitySync(new Intent(getTargetContext(),org.ocaml.android.HealthRationaleActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
         check("Démonstration API".contentEquals(rationale.getTitle()),"Configured Health rationale title");
+        onUi(()->{org.ocaml.android.SystemBarInsetsChecks.screen(rationale);return null;});
         runOnMainSync(rationale::finish);waitForIdleSync();
     }
     private Activity launchMainAfterAlarm(Activity main,String owner) {

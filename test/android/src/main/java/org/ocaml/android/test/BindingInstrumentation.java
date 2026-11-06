@@ -62,6 +62,24 @@ public final class BindingInstrumentation extends Instrumentation {
         String clock=value("locale.is24Hour");check(clock.equals("true") || clock.equals("false"),"12/24 hour preference");
         ok("ui.release",edit);ok("ui.release",layout);ok("ui.release",scroll);ok("ui.release",other);
     }
+    private String resourceString(String name){return value("resources.getString",value("resources.resolve","app","string",name));}
+    private void resourceStringTests() throws Exception {
+        java.lang.reflect.Field contextField=Bridge.class.getDeclaredField("context");contextField.setAccessible(true);
+        Context previous=(Context)contextField.get(null);
+        try{
+            // Localized contexts change no device setting or activity lifecycle.
+            for(String tag:new String[]{"fr-FR","en-US","fr-FR"}){
+                android.content.res.Configuration config=new android.content.res.Configuration(previous.getResources().getConfiguration());
+                config.setLocale(java.util.Locale.forLanguageTag(tag));contextField.set(null,previous.createConfigurationContext(config));
+                boolean french=tag.startsWith("fr");
+                check(resourceString("integration_localized_greeting").equals(french?"Bonjour été 🐫":"Hello 🐫"),"String follows current language on each read");
+                check(resourceString("integration_string_placeholder").equals(french?"Tâche %1$s":"Task %1$s"),"String read does not format percent placeholders");
+                check(resourceString("integration_string_fallback").equals("Default text"),"Android falls back to the default resource");
+                check(resourceString("integration_string_empty").isEmpty(),"Empty resource string is valid");
+            }
+            check(new String(call("resources.getString","0")[1],StandardCharsets.UTF_8).equals("unavailable"),"Invalid string id remains a structured error");
+        }finally{contextField.set(null,previous);}
+    }
     private void photoTests(String owner) throws Exception {
         android.graphics.Bitmap fixture=android.graphics.Bitmap.createBitmap(40,20,android.graphics.Bitmap.Config.ARGB_8888);
         fixture.eraseColor(android.graphics.Color.RED);
@@ -291,6 +309,7 @@ public final class BindingInstrumentation extends Instrumentation {
             healthLocationTests(owner);
             final Activity settingsOwner=activity;onUi(()->{org.ocaml.android.SettingsChecks.run(settingsOwner);org.ocaml.android.AlarmPresentationChecks.run(settingsOwner);return null;});
             utilityTests(owner);
+            resourceStringTests();
             photoTests(owner);
             alarmScreenTests(owner);
             activity=launchMainAfterAlarm(activity,owner);

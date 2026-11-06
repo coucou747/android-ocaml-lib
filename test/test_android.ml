@@ -20,6 +20,10 @@ let () =
        stop_handler="stop"; snooze_handler="snooze"; payload=""}) >>= fun () ->
     expect_invalid "qualified resource name" (Android.Resources.resolve ~scope:Android ~kind:Drawable ~name:"android:drawable/icon") >>= fun () ->
     expect_invalid "missing resource name" (Android.Resources.resolve ~scope:Application ~kind:Mipmap ~name:"") >>= fun () ->
+    Lwt_list.iter_s (fun name -> expect_invalid "unqualified string resource name" (Android.Resources.get_string ~name))
+      ["";" ";"@string/title";"android:string/ok";"string/title";"bad\000name"] >>= fun () ->
+    Android.Resources.get_string ~name:"host_string" >>= (function
+      | Error (Android.Error.Unavailable _) -> Lwt.return_unit | _ -> Lwt.fail_with "Host string lookup must report Android unavailable") >>= fun () ->
     expect_invalid "invalid health interval" (Android.Health_connect.read_steps {start_ms=2L;end_ms=1L;page_size=1;page_token=None}) >>= fun () ->
     expect_invalid "invalid health page" (Android.Health_connect.read_sleep {start_ms=1L;end_ms=2L;page_size=0;page_token=None}) >>= fun () ->
     expect_invalid "invalid aggregate interval" (Android.Health_connect.aggregate_steps ~start_ms:2L ~end_ms:1L) >>= fun () ->

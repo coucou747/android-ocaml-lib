@@ -222,6 +222,11 @@ module Resources = struct
     if name = "" || String.contains name ':' || String.contains name '/' then invalid "Expected an unqualified resource name"
     else int "resources.resolve" [(match scope with Application -> "app" | Android -> "android");
       (match kind with Drawable -> "drawable" | Mipmap -> "mipmap" | Raw -> "raw" | String -> "string" | Color -> "color"); name]
+  let get_string ~name : string response =
+    if String.trim name="" || String.contains name '\000' then invalid "Expected an unqualified string resource name" else
+    resolve ~scope:Application ~kind:String ~name >>= function
+    | Error e -> Lwt.return (Error e)
+    | Ok id -> one "resources.getString" [s id]
 end
 
 module Locale = struct

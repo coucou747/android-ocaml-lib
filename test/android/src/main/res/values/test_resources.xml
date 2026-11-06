@@ -2,4 +2,8 @@
     <item name="integration_alarm_icon" type="drawable">@android:drawable/ic_lock_idle_alarm</item>
     <string name="health_rationale_title">Démonstration API</string>
     <string name="health_rationale_text">Démonstration API</string>
+    <string name="integration_localized_greeting">Hello 🐫</string>
+    <string name="integration_string_fallback">Default text</string>
+    <string name="integration_string_empty"></string>
+    <string name="integration_string_placeholder">Task %1$s</string>
 </resources>

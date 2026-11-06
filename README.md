@@ -378,6 +378,16 @@ Une ressource manquante donne `Error.Unavailable`, jamais l’identifiant zéro.
 Un client qui réduit ses ressources à la compilation doit conserver explicitement
 les noms résolus dynamiquement (règles `tools:keep` du resource shrinker).
 
+`Android.Resources.get_string ~name:"task_title"` lit une ressource `string` de
+l’application selon la langue active, sans nécessiter d’activité. Chaque appel
+utilise la configuration courante, y compris les langues par application prises
+en charge par AndroidX Core, avec le repli normal d’Android vers les ressources
+par défaut. Le nom est non qualifié, sans `@string/` ni préfixe de package.
+Une ressource absente donne `Error.Unavailable`, un nom vide/qualifié ou contenant
+NUL donne `Error.Invalid_argument` ; une chaîne vide reste `Ok ""`.
+La lecture retourne du texte UTF-8 sans mise en forme des paramètres `%1$s`.
+Les noms utilisés ici doivent aussi être conservés par le resource shrinker.
+
 `Audio.default_alarm_uri ()` renvoie `Some uri` pour la sonnerie d’alarme configurée,
 ou `None` si aucune n’est sélectionnée. La bibliothèque ne substitue aucun autre son.
 L’URI peut être passée à `Audio.play ~uri ~loop:true`, sous réserve des droits système.

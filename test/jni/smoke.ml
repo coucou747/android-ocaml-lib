@@ -15,6 +15,7 @@ let () = Android.Runtime.set_entry (fun () ->
   Android.Activity.current () >>= (function
     | Error (Android.Error.Invalid_handle _) -> Lwt.return_unit
     | _ -> Lwt.fail_with "Expected cold start without activity") >>= fun () ->
+  Android.Resources.get_string ~name:"empty" >>= require >>= fun empty -> assert (empty="");
   Android.Activity.launch_main () >>= require >>= fun () ->
   Android.Activity.on_lifecycle (fun activity _ ->
     Android.Ui.text activity "Été 🐫" >>= require >>= fun view ->
@@ -57,6 +58,11 @@ let () = Android.Runtime.set_entry (fun () ->
     Android.Ui.image activity ~uri:"content://test/photo.jpg" ~max_width_px:0 ~max_height_px:1 >>= (function
       | Error (Android.Error.Invalid_argument _) -> Lwt.return_unit | _ -> Lwt.fail_with "Image bounds validation") >>= fun () ->
     Android.Resources.resolve ~scope:Android ~kind:Drawable ~name:"ic_lock_idle_alarm" >>= require >>= fun icon -> assert (icon > 0);
+    Android.Resources.get_string ~name:"greeting" >>= require >>= fun greeting -> assert (greeting="Bonjour été 🐫");
+    Android.Resources.get_string ~name:"greeting" >>= require >>= fun greeting -> assert (greeting="Hello");
+    Android.Resources.get_string ~name:"empty" >>= require >>= fun empty -> assert (empty="");
+    Android.Resources.get_string ~name:"missing" >>= (function Error (Android.Error.Unavailable _) -> Lwt.return_unit | _ -> Lwt.fail_with "Missing string resource") >>= fun () ->
+    Android.Resources.get_string ~name:"malformed" >>= (function Error (Android.Error.Protocol _) -> Lwt.return_unit | _ -> Lwt.fail_with "Malformed string response") >>= fun () ->
     Android.Audio.default_alarm_uri () >>= require >>= fun ringtone -> assert (ringtone = Some "content://media/alarm");
     Android.Audio.default_alarm_uri () >>= require >>= fun ringtone -> assert (ringtone = None);
     Android.Locale.time_zone () >>= require >>= fun zone -> assert (zone = "Europe/Paris");

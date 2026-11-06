@@ -199,6 +199,14 @@ module Resources : sig
   (** Resolve an unqualified name. A missing resource is [Error.Unavailable],
       never the invalid resource identifier zero. *)
   val resolve : scope:scope -> kind:kind -> name:string -> int response
+  (** Read an application string resource by unqualified name (e.g. "task_title").
+      Uses the current application language on each call, including per-app
+      locales supported by AndroidX Core, with Android's normal resource fallback.
+      Works without an activity. No string/locale cache and no format arguments;
+      percent placeholders remain literal. Empty strings are valid results.
+      Blank, qualified or NUL-containing names give Invalid_argument; a missing
+      string gives Unavailable. Dynamically used names must survive shrinking. *)
+  val get_string : name:string -> string response
 end
 module Locale : sig
   (** Read the current phone/application configuration at each call. *)

@@ -8,7 +8,7 @@ public final class Bridge {
     static final BlockingQueue<byte[][]> events=new LinkedBlockingQueue<>();
     static final CountDownLatch done=new CountDownLatch(1);
     static volatile String failure;
-    static int alarmReads,healthReads,backgroundRequests,settingsStage,qrReads;
+    static int alarmReads,healthReads,backgroundRequests,settingsStage,qrReads,stringReads;
     static byte[] settingsSubscription;
     static boolean settingsOpened;
     static boolean informationPage,resumeSent,informationUpdated;
@@ -144,7 +144,24 @@ public final class Bridge {
         case "activity.displaySize":return new byte[][]{text("ok"),text("1080"),text("1920")};
         case "ui.image":case "ui.scroll":return new byte[][]{text("ok"),text("new-view")};
         case "ui.imageUri":case "ui.inputType":case "ui.multiline":case "ui.hint":case "ui.error":case "ui.add":case "ui.release":return new byte[][]{text("ok")};
-        case "resources.resolve":return new byte[][]{text("ok"),text("17301536")};
+        case "resources.resolve":
+            if(Arrays.equals(args[1],text("string"))){
+                if(!Arrays.equals(args[0],text("app")))throw new AssertionError("Application string scope");
+                String resource=new String(args[2],StandardCharsets.UTF_8);
+                switch(resource){
+                case "greeting":return ok(text("1"));
+                case "empty":return ok(text("2"));
+                case "malformed":return ok(text("3"));
+                case "missing":return new byte[][]{text("error"),text("unavailable"),text("String not found")};
+                default:throw new AssertionError("String resource name transport");
+                }
+            }
+            return ok(text("17301536"));
+        case "resources.getString":
+            if(Arrays.equals(args[0],text("1")))return ok(text(++stringReads==1?"Bonjour été 🐫":"Hello"));
+            if(Arrays.equals(args[0],text("2")))return ok(text(""));
+            if(Arrays.equals(args[0],text("3")))return ok();
+            throw new AssertionError("Resolved string id transport");
         case "locale.timeZone":return new byte[][]{text("ok"),text("Europe/Paris")};
         case "locale.languageTag":return new byte[][]{text("ok"),text("fr-FR")};
         case "locale.is24Hour":return new byte[][]{text("ok"),text("true")};

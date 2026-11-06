@@ -355,6 +355,7 @@ public final class Bridge {
             if(id==0)throw new android.content.res.Resources.NotFoundException(pkg+":"+a[1]+"/"+a[2]);
             return ok(id);
         }
+        case "resources.getString": return ok(androidx.core.content.ContextCompat.getString(context,Integer.parseInt(a[0])));
         case "locale.timeZone": return ok(TimeZone.getDefault().getID());
         case "locale.languageTag": return ok(context.getResources().getConfiguration().getLocales().get(0).toLanguageTag());
         case "locale.is24Hour": return ok(android.text.format.DateFormat.is24HourFormat(context));

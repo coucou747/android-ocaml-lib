@@ -7,7 +7,7 @@ import java.util.Arrays;
 final class SettingsBackend {
     private static String subscription;
     private static volatile boolean active,granted,pending,complete;
-    private static int clicks,requests,opens,acknowledgements;
+    private static int clicks,requests,opens,acknowledgements,updates;
     private static String str(byte[] value){return new String(value,StandardCharsets.UTF_8);}
     static boolean handles(String op,byte[][] a){
         if(op.equals("settings.create"))return str(a[2]).contains("Status permission");
@@ -24,11 +24,14 @@ final class SettingsBackend {
             if(!a[2].contains("\"kind\":\"action\"") || !a[2].contains("\"description\":\"Unknown\""))throw new AssertionError("Native action with initial summary");
             subscription=a[0];active=true;return ok("status-page");
         case "settings.update":{
+            updates++;
             if(!a[1].contains("\"kind\":\"action\"") || a[1].contains("\"value\""))throw new AssertionError("Status must not be a stored preference value");
             boolean displaysGranted=a[1].contains("\"description\":\"Granted\"");
             boolean displaysDenied=a[1].contains("\"description\":\"Denied\"");
             if(!pending && (clicks==0 && displaysDenied || clicks==1 && displaysGranted || clicks==2 && displaysDenied))click();
-            else if(clicks==3 && acknowledgements==3 && displaysDenied)complete=true;
+            // Five resume callbacks (opening, three actions, one settings return)
+            // each update the summary then refresh. Wait for all before release.
+            else if(clicks==3 && acknowledgements==3 && displaysDenied && updates>=10)complete=true;
             return ok();
         }
         case "settings.result":

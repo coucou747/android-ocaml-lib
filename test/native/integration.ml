@@ -70,10 +70,23 @@ let gps_status activity () =
   | Error (Android.Error.Permission_denied _) -> status "Localisation précise non autorisée"
   | Error (Android.Error.Unavailable _) -> status "GPS indisponible"
   | Error _ -> status "Erreur de localisation"
-let alarm activity () =
-  Android.Alarm.Screen.show activity {id="integration";notification_id=41;
-    title="Alarme de test";text="Écran réutilisable";stop_label="Arrêter";snooze_label="Reporter";
-    stop_handler="integration.stop";snooze_handler="integration.snooze";payload="integration"} >>= require
+let alarm_presentation () : Android.Alarm.Screen.presentation = {
+  id="integration";notification_id=41;title="Tâche de démonstration";subtitle=Some "Présentation Material de l’application";
+  message="Les actions et leur présentation sont fournies par l’application. La photo capturée est utilisée si elle est disponible.";
+  media=Option.map (fun photo -> {Android.Alarm.Screen.uri=Android.Camera.uri photo;
+    content_description="Photo associée à la tâche";max_height_dp=Some 240}) !last_photo;
+  layout=Expanded;actions=[
+    {id="begin";label="Commencer";role=Primary;handler="integration.begin";payload="integration-task"};
+    {id="remind";label="Reporter";role=Secondary;handler="integration.snooze";payload="integration-task"}]}
+let alarm activity () = Android.Alarm.Screen.show_presentation activity (alarm_presentation ()) >>= require
+let alarm_notification activity () =
+  Android.Permissions.request activity ["android.permission.POST_NOTIFICATIONS"] >>= fun _ ->
+  Android.Notification.create_channel ~id:"integration-alarms" ~name:"Alarmes de démonstration" ~importance:High >>= require >>= fun () ->
+  Android.Resources.resolve ~scope:Application ~kind:Drawable ~name:"integration_alarm_icon" >>= require >>= fun icon ->
+  Android.Alarm.Screen.notify_presentation ~channel:"integration-alarms" ~small_icon:icon ~full_screen:false (alarm_presentation ()) >>= function
+  | Ok () -> status "Notification d’alarme publiée"
+  | Error (Android.Error.Permission_denied _) -> status "Notifications non autorisées"
+  | Error _ -> status "Notification d’alarme indisponible"
 let manage_health_background activity =
   Android.Health_connect.background_read_granted () >>= function
   | Error e -> Lwt.return (Error e)
@@ -152,7 +165,7 @@ let render activity =
     Android.Ui.secondary_button activity label >>= require >>= fun button ->
     Android.Ui.add layout button >>= require >>= fun () ->
     Android.Events.on_click button callback >>= require >|= fun _ -> ())
-    ["Dialogue d’information",alert_action activity; "Confirmer une action",confirm_action activity; "Prendre une photo",capture activity; "Scanner un QR code",scan_qr activity; "Écran d’alarme",alarm activity; "Date, son et ressource",local_status;
+    ["Dialogue d’information",alert_action activity; "Confirmer une action",confirm_action activity; "Prendre une photo",capture activity; "Scanner un QR code",scan_qr activity; "Écran d’alarme",alarm activity; "Notification d’alarme",alarm_notification activity; "Date, son et ressource",local_status;
      "Health Connect : état",health_status; "Health Connect : autorisations",health_permissions activity;
      "Health Connect : accès en arrière-plan",health_background_permissions activity;
      "GPS : autorisation en arrière-plan",gps_background_permissions activity;
@@ -226,6 +239,9 @@ let () =
   register "integration.stop" (fun _ ->
     Android.Activity.launch_main () >>= require >>= fun () ->
     status "Alarme arrêtée" >|= fun () -> Android.Background.Success);
+  register "integration.begin" (fun _ ->
+    Android.Activity.launch_main () >>= require >>= fun () ->
+    status "Tâche commencée" >|= fun () -> Android.Background.Success);
   register "integration.snooze" (fun _ -> status "Report demandé" >|= fun () -> Android.Background.Success);
   Android.Runtime.set_entry (fun () ->
     Android.Activity.on_lifecycle (fun activity event ->

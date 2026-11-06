@@ -22,3 +22,8 @@
  (name test_layout)
  (modules test_layout)
  (libraries android-ocaml-lib))
+
+(test
+ (name test_alarm_presentation)
+ (modules test_alarm_presentation)
+ (libraries android-ocaml-lib))

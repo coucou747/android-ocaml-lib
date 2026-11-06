@@ -170,6 +170,8 @@ public final class Bridge {
                 return ok(result.get());
             }
             if(op.equals("alarm.screen.show")) return ui(()->{AlarmScreenActivity.show(get(a[0],Activity.class),Arrays.copyOfRange(a,1,a.length));return ok();});
+            if(op.equals("alarm.screen.showPresentation")) return ui(()->{AlarmScreenActivity.show(get(a[0],Activity.class),new AlarmPresentation(a[1]));return ok();});
+            if(op.equals("alarm.screen.notifyPresentation")) return ui(()->{AlarmScreenActivity.notify(context,a[0],Integer.parseInt(a[1]),Boolean.parseBoolean(a[2]),new AlarmPresentation(a[3]));return ok();});
             if(op.equals("alarm.screen.notify")) return ui(()->{AlarmScreenActivity.notify(context,a[0],Integer.parseInt(a[1]),Boolean.parseBoolean(a[2]),Arrays.copyOfRange(a,3,a.length));return ok();});
             if(op.equals("alarm.screen.dismiss")) return ui(()->{AlarmScreenActivity.dismiss(context,a[0],Integer.parseInt(a[1]));return ok();});
             if(op.equals("permissions.request")) {

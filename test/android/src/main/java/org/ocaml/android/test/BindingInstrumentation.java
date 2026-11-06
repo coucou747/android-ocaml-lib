@@ -115,7 +115,7 @@ public final class BindingInstrumentation extends Instrumentation {
             ok("alarm.screen.show",owner,"instrumentation",41,"Alarm","Test","Stop","Snooze","integration.stop","integration.snooze","payload");
             Activity screen=monitor.waitForActivity();waitForIdleSync();
             check(screen instanceof org.ocaml.android.AlarmScreenActivity,"Alarm activity displayed");
-            onUi(()->{org.ocaml.android.SystemBarInsetsChecks.screen(screen);return null;});
+            onUi(()->{org.ocaml.android.SystemBarInsetsChecks.screen(screen);org.ocaml.android.AlarmPresentationChecks.replacement((org.ocaml.android.AlarmScreenActivity)screen);return null;});
             ok("alarm.screen.dismiss","instrumentation",41);waitForIdleSync();
             check(screen.isFinishing() || screen.isDestroyed(),"Alarm screen dismissed");
         } finally {removeMonitor(monitor);}
@@ -289,7 +289,7 @@ public final class BindingInstrumentation extends Instrumentation {
             componentTests(owner);
             authenticationTests();
             healthLocationTests(owner);
-            final Activity settingsOwner=activity;onUi(()->{org.ocaml.android.SettingsChecks.run(settingsOwner);return null;});
+            final Activity settingsOwner=activity;onUi(()->{org.ocaml.android.SettingsChecks.run(settingsOwner);org.ocaml.android.AlarmPresentationChecks.run(settingsOwner);return null;});
             utilityTests(owner);
             photoTests(owner);
             alarmScreenTests(owner);

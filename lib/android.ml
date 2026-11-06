@@ -396,15 +396,50 @@ module Alarm = struct
       stop_label : string; snooze_label : string;
       stop_handler : string; snooze_handler : string; payload : string;
     }
-    let valid t = t.id <> "" && t.stop_label <> "" && t.snooze_label <> ""
-      && t.stop_handler <> "" && t.snooze_handler <> ""
-    let args t = [t.id; s t.notification_id; t.title; t.text; t.stop_label;
-      t.snooze_label; t.stop_handler; t.snooze_handler; t.payload]
-    let show activity t = if not (valid t) then invalid "Alarm screen labels, id and handlers are required"
-      else unit_call "alarm.screen.show" (activity :: args t)
-    let notify ~channel ~small_icon ~full_screen t =
-      if not (valid t) || channel = "" || small_icon <= 0 then invalid "Invalid alarm screen notification"
-      else unit_call "alarm.screen.notify" ([channel; s small_icon; string_of_bool full_screen] @ args t)
+    type action_role = Primary | Secondary | Neutral | Destructive
+    type action = {id:string;label:string;role:action_role;handler:string;payload:string}
+    type media = {uri:string;content_description:string;max_height_dp:int option}
+    type layout = Compact | Standard | Expanded
+    type presentation = {id:string;notification_id:int;title:string;subtitle:string option;
+      message:string;media:media option;actions:action list;layout:layout}
+    let identifier value = String.trim value<>"" && not (String.exists (fun c -> Char.code c<32 || Char.code c=127) value)
+    let android_int n = Int64.of_int n>= -2147483648L && Int64.of_int n<=2147483647L
+    let local_uri uri = not (String.contains uri '\000') &&
+      List.exists (fun prefix -> String.starts_with ~prefix uri && String.length uri>String.length prefix)
+        ["content://";"file://";"android.resource://"]
+    let validate (p:presentation) =
+      let reject message = Error (Error.Invalid_argument message) in
+      if not (identifier p.id) || not (android_int p.notification_id) then reject "Invalid alarm identity or Android notification id"
+      else if List.length p.actions<1 || List.length p.actions>3 then reject "An alarm requires one to three actions"
+      else if List.exists (fun (a:action) -> not (identifier a.id && identifier a.handler) || String.trim a.label="" || String.contains a.label '\000') p.actions
+        then reject "Action ids, labels and handlers must be nonempty and valid"
+      else if List.length (List.sort_uniq String.compare (List.map (fun (a:action) -> a.id) p.actions))<>List.length p.actions
+        then reject "Alarm action ids must be unique"
+      else match p.media with
+        | Some m when not (local_uri m.uri) || String.trim m.content_description="" || String.contains m.content_description '\000' ||
+          not (Option.fold ~none:true ~some:(fun n -> n>0 && android_int n) m.max_height_dp) -> reject "Invalid local alarm media or height"
+        | _ -> Ok ()
+    let json (p:presentation) =
+      let text = function None -> `Null | Some v -> `String v in
+      Yojson.Safe.to_string (`Assoc ["id",`String p.id;"notification_id",`Int p.notification_id;
+        "title",`String p.title;"subtitle",text p.subtitle;"message",`String p.message;
+        "layout",`String (match p.layout with Compact -> "compact" | Standard -> "standard" | Expanded -> "expanded");
+        "media",(match p.media with None -> `Null | Some m -> `Assoc ["uri",`String m.uri;
+          "content_description",`String m.content_description;"max_height_dp",(match m.max_height_dp with None -> `Null | Some n -> `Int n)]);
+        "actions",`List (List.map (fun (a:action) -> `Assoc ["id",`String a.id;"label",`String a.label;
+          "role",`String (match a.role with Primary -> "primary" | Secondary -> "secondary" | Neutral -> "neutral" | Destructive -> "destructive");
+          "handler",`String a.handler;"payload",`String a.payload]) p.actions)])
+    let show_presentation activity p = match validate p with Error e -> Lwt.return (Error e)
+      | Ok () -> unit_call "alarm.screen.showPresentation" [activity;json p]
+    let notify_presentation ~channel ~small_icon ~full_screen p = match validate p with Error e -> Lwt.return (Error e)
+      | Ok () when channel="" || small_icon<=0 || not (android_int small_icon) -> invalid "Invalid alarm notification channel or icon"
+      | Ok () -> unit_call "alarm.screen.notifyPresentation" [channel;s small_icon;string_of_bool full_screen;json p]
+    let of_legacy (t:t) : presentation = {id=t.id;notification_id=t.notification_id;title=t.title;
+      subtitle=None;message=t.text;media=None;layout=Standard;actions=[
+        {id="stop";label=t.stop_label;role=Primary;handler=t.stop_handler;payload=t.payload};
+        {id="snooze";label=t.snooze_label;role=Secondary;handler=t.snooze_handler;payload=t.payload}]}
+    let show activity t = show_presentation activity (of_legacy t)
+    let notify ~channel ~small_icon ~full_screen t = notify_presentation ~channel ~small_icon ~full_screen (of_legacy t)
     let dismiss ~id ~notification_id = if id = "" then invalid "Alarm screen id is required"
       else unit_call "alarm.screen.dismiss" [id; s notification_id]
   end

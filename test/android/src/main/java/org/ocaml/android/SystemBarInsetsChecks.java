@@ -63,5 +63,14 @@ public final class SystemBarInsetsChecks {
         check(root.getPaddingTop()==UiComponents.dp(owner,2) && root.getPaddingBottom()==UiComponents.dp(owner,4),"Hidden bars restore base padding");
         SystemBarInsets.clear(root);check(root.getTag(R.id.ocaml_system_bar_insets)==null,"Release removes handler state");
         SystemBarInsets.clear(root);
+        View alarmRoot=new FrameLayout(owner);alarmRoot.setPadding(1,2,3,4);SystemBarInsets.applyAll(alarmRoot);
+        OnApplyWindowInsetsListener all=(OnApplyWindowInsetsListener)alarmRoot.getTag(R.id.ocaml_system_bar_insets);
+        WindowInsetsCompat landscape=new WindowInsetsCompat.Builder()
+            .setInsets(WindowInsetsCompat.Type.statusBars(),Insets.of(0,10,0,0))
+            .setInsets(WindowInsetsCompat.Type.navigationBars(),Insets.of(8,0,14,20)).build();
+        WindowInsetsCompat unused=all.onApplyWindowInsets(alarmRoot,landscape);all.onApplyWindowInsets(alarmRoot,landscape);
+        check(alarmRoot.getPaddingLeft()==9 && alarmRoot.getPaddingTop()==12 && alarmRoot.getPaddingRight()==17 && alarmRoot.getPaddingBottom()==24,"Alarm mode handles all sides without accumulation");
+        check(unused.getInsets(WindowInsetsCompat.Type.systemBars()).equals(Insets.NONE),"Alarm descendants do not repeat handled side insets");
+        SystemBarInsets.clear(alarmRoot);
     }
 }

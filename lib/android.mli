@@ -264,7 +264,36 @@ module Alarm : sig
       stop_label : string; snooze_label : string;
       stop_handler : string; snooze_handler : string; payload : string;
     }
-    (** Show from a foreground activity. Buttons dispatch the named Runtime
+    type action_role = Primary | Secondary | Neutral | Destructive
+    type action = {id:string;label:string;role:action_role;handler:string;payload:string}
+    type media = {uri:string;content_description:string;max_height_dp:int option}
+    type layout = Compact | Standard | Expanded
+    type presentation = {id:string;notification_id:int;title:string;subtitle:string option;
+      message:string;media:media option;actions:action list;layout:layout}
+    (** One to three actions, unique nonblank ids, nonblank labels/handlers,
+        signed Android 32-bit notification id. Media must use a local content,
+        file or android.resource URI, have nonblank alternative text and, when
+        supplied, a positive Android 32-bit height in dp. No Android calls. *)
+    val validate : presentation -> (unit, Error.t) result
+    (** Material host theme (application, or launcher theme when necessary), with
+        a DayNight Material fallback. Insets, scrolling and readable padding are
+        automatic. Layout controls density, typography and action arrangement.
+        Media is loaded asynchronously within viewport bounds, respecting EXIF;
+        a missing/unreadable media leaves text and actions usable. The URI must
+        remain readable after process restart; no transient URI grant is retained. *)
+    val show_presentation : Activity.t -> presentation -> unit response
+    (** Same authorization requirements as notify below. Notification actions use
+        the same ids, labels, handlers and payloads as the screen. Android owns
+        notification colors/layout; roles and image preview apply to the screen.
+        Payloads/URIs cross Binder: keep large data in files, not in payloads.
+        Named handlers must be registered at each process startup, including cold
+        starts. Action claiming is persisted before dispatch to suppress duplicate
+        clicks across activities/restarts; handler execution is not transactional
+        and can be interrupted after claiming. Handlers must be idempotent.
+        Re-publishing after a handled/dismissed alarm explicitly re-arms it. *)
+    val notify_presentation : channel:string -> small_icon:int -> full_screen:bool -> presentation -> unit response
+    (** Compatibility wrapper: Standard layout, stop Primary and snooze Secondary.
+        Show from a foreground activity. Buttons dispatch the named Runtime
         handlers with [payload]; the client stops sound or schedules snooze. *)
     val show : Activity.t -> t -> unit response
     (** Post an alarm notification with direct activity actions. Requires a HIGH

@@ -10,7 +10,7 @@
     </activity>
     <activity android:name="org.ocaml.android.BridgeActivity" android:exported="false" />
     <activity android:name="org.ocaml.android.PhotoCaptureActivity" android:exported="false" android:theme="@android:style/Theme.Material.Light.NoActionBar" />
-    <activity android:name="org.ocaml.android.AlarmScreenActivity" android:exported="false" android:launchMode="singleTop" android:theme="@android:style/Theme.Material.Light.NoActionBar" />
+    <activity android:name="org.ocaml.android.AlarmScreenActivity" android:exported="false" android:launchMode="singleTop" />
     <activity android:name="org.ocaml.android.HealthPermissionsActivity" android:exported="false" />
     <activity android:name="org.ocaml.android.HealthRationaleActivity" android:exported="true">
       <intent-filter><action android:name="androidx.health.ACTION_SHOW_PERMISSIONS_RATIONALE" /></intent-filter>

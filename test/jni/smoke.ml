@@ -5,6 +5,9 @@ let check_fix (fix : Android.Location.fix) =
   assert (fix.latitude=1.25 && fix.longitude = -2.5 && fix.accuracy_m=Some 5. && fix.altitude_m=None);
   assert (fix.at_ms=2147483648000L && fix.elapsed_realtime_ns=9876543210123L && fix.is_mock)
 let background,background_done=Lwt.wait ()
+let alarm_action,alarm_done=Lwt.wait ()
+let () = assert (Android.Runtime.register ~name:"alarm.start" (fun payload ->
+  assert (payload="tâche\0001");Lwt.wakeup_later alarm_done ();Lwt.return Android.Background.Success)=Ok ())
 let () = assert (Android.Location.register_background_handler ~name:"gps.handler" (function
   | Fix fix -> check_fix fix;Lwt.wakeup_later background_done ();Lwt.return Android.Background.Success
   | _ -> Lwt.fail_with "Unexpected background GPS event") = Ok ())
@@ -78,6 +81,14 @@ let () = Android.Runtime.set_entry (fun () ->
     Android.Alarm.Screen.show activity screen >>= require >>= fun () ->
     Android.Alarm.Screen.notify ~channel:"test" ~small_icon:1 ~full_screen:false screen >>= require >>= fun () ->
     Android.Alarm.Screen.dismiss ~id:"test" ~notification_id:1 >>= require >>= fun () ->
+    let custom : Android.Alarm.Screen.presentation = {id="custom";notification_id=1;title="Tâche été";subtitle=Some "Sous-titre";
+      message="Message\nUTF-8";media=Some {uri="content://photos/été";content_description="Photo été";max_height_dp=Some 240};
+      layout=Expanded;actions=[{id="start";label="Commencer 🐫";role=Primary;handler="alarm.start";payload="tâche\0001"};
+        {id="delete";label="Supprimer";role=Destructive;handler="delete";payload="autre"}]} in
+    Android.Alarm.Screen.show_presentation activity custom >>= require >>= fun () ->
+    Android.Alarm.Screen.notify_presentation ~channel:"test" ~small_icon:1 ~full_screen:false custom >>= require >>= fun () ->
+    alarm_action >>= fun () ->
+    Android.Alarm.Screen.show_presentation activity {custom with actions=[]} >>= (function Error (Android.Error.Invalid_argument _) -> Lwt.return_unit | _ -> Lwt.fail_with "Invalid alarm presentation reached JNI") >>= fun () ->
     Android.Health_connect.status () >>= require >>= fun status -> assert (status = Available);
     Android.Health_connect.status () >>= require >>= fun status -> assert (status = Update_required);
     Android.Health_connect.status () >>= require >>= fun status -> assert (status = Unavailable);

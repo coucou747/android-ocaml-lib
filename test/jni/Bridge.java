@@ -157,6 +157,14 @@ public final class Bridge {
         case "camera.open":return new byte[][]{text("ok"),args[0]};
         case "camera.read":return new byte[][]{text("ok"),binary};
         case "camera.delete":case "alarm.screen.show":case "alarm.screen.dismiss":case "alarm.screen.notify":return new byte[][]{text("ok")};
+        case "alarm.screen.showPresentation":case "alarm.screen.notifyPresentation":{
+            String json=new String(args[name.endsWith("showPresentation")?1:3],StandardCharsets.UTF_8);
+            if(!json.contains("\"actions\":[") || !json.contains("\"notification_id\":1"))throw new AssertionError("Alarm presentation transport");
+            if(json.contains("\"id\":\"test\"") && (!json.contains("\"id\":\"stop\"") || !json.contains("\"id\":\"snooze\"") || !json.contains("\"layout\":\"standard\"")))throw new AssertionError("Legacy alarm wrapper");
+            if(json.contains("\"id\":\"custom\"") && (!json.contains("Commencer 🐫") || !json.contains("\"role\":\"destructive\"") || !json.contains("\"content_description\":\"Photo été\"")))throw new AssertionError("Custom alarm fields");
+            if(name.endsWith("notifyPresentation") && json.contains("\"id\":\"custom\""))events.add(new byte[][]{text("handler"),text("alarm-custom"),text("alarm.start"),text("tâche\u00001")});
+            return ok();
+        }
         case "storage.fileUri":return ok(text("file:///private/photo%20%C3%A9t%C3%A9.jpg"));
         case "storage.read":return new byte[][]{text("ok"),binary};
         case "storage.write":

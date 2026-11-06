@@ -1,0 +1,14 @@
+<resources>
+    <!-- Material spacing and touch-target defaults; host resources may override. -->
+    <dimen name="ocaml_alarm_compact_padding">16dp</dimen>
+    <dimen name="ocaml_alarm_standard_padding">24dp</dimen>
+    <dimen name="ocaml_alarm_expanded_padding">32dp</dimen>
+    <dimen name="ocaml_alarm_compact_gap">8dp</dimen>
+    <dimen name="ocaml_alarm_standard_gap">12dp</dimen>
+    <dimen name="ocaml_alarm_expanded_gap">16dp</dimen>
+    <dimen name="ocaml_alarm_touch_target">48dp</dimen>
+    <style name="OcamlAlarmNeutralButtonTheme"><item name="materialButtonStyle">@style/Widget.Material3.Button.TextButton</item></style>
+    <style name="OcamlAlarmPrimaryM2Theme"><item name="materialButtonStyle">@style/Widget.MaterialComponents.Button</item></style>
+    <style name="OcamlAlarmSecondaryM2Theme"><item name="materialButtonStyle">@style/Widget.MaterialComponents.Button.OutlinedButton</item></style>
+    <style name="OcamlAlarmNeutralM2Theme"><item name="materialButtonStyle">@style/Widget.MaterialComponents.Button.TextButton</item></style>
+</resources>

@@ -229,6 +229,77 @@ la taille du résultat, pour éviter d’exposer son contenu à l’écran.
 
 ## Écran d’alarme
 
+`Alarm.Screen.presentation` configure le contenu, le média, la disposition et une
+à trois actions. Exemple pour une application de tâches :
+
+```ocaml
+module A = Android.Alarm.Screen
+let task_alarm ~task_id ~notification_id ~title ~message ~photo_uri ~allow_snooze : A.presentation = {
+  id=task_id; notification_id; title; subtitle=None; message;
+  media=Option.map (fun uri -> {A.uri; content_description="Photo de la tâche";
+                               max_height_dp=Some 240}) photo_uri;
+  layout=Standard;
+  actions={id="begin"; label="Commencer"; role=Primary;
+           handler="tasks.begin"; payload=task_id} ::
+    (if allow_snooze then [{id="remind"; label="Rappeler dans 1 h"; role=Secondary;
+                           handler="tasks.remind_one_hour"; payload=task_id}] else []);
+}
+```
+
+Les handlers `tasks.begin` et `tasks.remind_one_hour` appartiennent à l’application
+et sont enregistrés à chaque démarrage avec `Runtime.register`. Le second handler
+implémente lui-même la politique de report choisie par l’application.
+
+- `Alarm.Screen.validate presentation` vérifie le modèle sans appeler Android.
+- `show_presentation activity presentation` ouvre l’écran et valide le modèle.
+- `notify_presentation ~channel ~small_icon ~full_screen presentation` publie ses
+  actions dans une notification, avec les mêmes exigences d’autorisation décrites plus bas.
+
+Les identifiants et noms de handlers doivent être non vides, sans caractères de
+contrôle ; les identifiants d’action sont uniques. Les libellés ne sont pas vides.
+L’identifiant de notification est un entier Android signé de 32 bits, zéro compris.
+Chaque action possède son propre payload texte UTF-8. Un modèle invalide retourne
+`Error (Invalid_argument ...)` avant tout appel Android.
+
+L’activité reprend le thème Material déclaré de l’activité appelante, ou celui de
+l’application/activité principale pour une notification à froid. Sans thème
+Material, elle utilise Material 3 DayNight. Les couleurs, polices et modes clair/
+sombre viennent du thème ; aucun choix de couleur applicatif n’est demandé.
+`Primary` est rempli, `Secondary` détouré, `Neutral` textuel, `Destructive` utilise
+les couleurs d’erreur du thème. Les notifications conservent le rendu du système.
+
+`Compact` utilise des espacements réduits et des actions horizontales ; `Standard`
+et `Expanded` utilisent des actions verticales, une typographie et des espacements
+adaptés. Expanded centre le contenu court dans la hauteur disponible. Le contenu
+défile si nécessaire. Les insets des barres et découpes sont appliqués aux quatre
+côtés, avec cibles tactiles d’au moins 48 dp. Les dimensions `ocaml_alarm_*` sont
+des ressources de présentation surchargeables par l’application.
+
+Le média est un aperçu d’image dans l’écran, chargé hors du thread UI, borné à la
+fenêtre et à `max_height_dp` lorsqu’il est fourni. L’orientation EXIF est respectée
+et `content_description` fournit le texte alternatif. Les URI `content://`,
+`file://` et `android.resource://` sont acceptées ; un fichier absent ou illisible
+laisse le texte et les actions accessibles. L’application doit conserver le fichier
+et les droits de lecture nécessaires après redémarrage. Aucun téléchargement réseau
+ni transfert de droit URI temporaire n’est effectué. La notification affiche le
+titre, le sous-titre, le texte et les actions ; elle n’embarque pas l’aperçu d’image.
+
+Une présentation active identique partage le même jeton entre écran et notification.
+La première action consomme ce jeton dans le stockage privé avant d’appeler son
+handler ; les autres clics, les anciennes notifications remplacées et les clics
+après `dismiss` ne déclenchent plus de handler. Cette protection survit au redémarrage
+du processus et ne conserve que les présentations actives, sans journal croissant
+des alarmes déjà traitées. Présenter à nouveau une alarme traitée ou fermée avec
+`dismiss` la réarme explicitement ; changer son contenu remplace sa version active.
+
+Le traitement métier n’est pas une transaction durable : si Android tue le
+processus entre la consommation du jeton et la fin du handler, il peut rester
+incomplet et n’est pas rejoué automatiquement. Les handlers doivent être idempotents
+et relire leurs données persistées. Les intents contiennent les noms et payloads,
+sans fermeture OCaml en mémoire. Garder les gros contenus dans des fichiers pour
+respecter la limite Binder des intents.
+
+L’ancienne API reste compatible et constitue un wrapper vers le modèle :
 `Android.Alarm.Screen.t` contient l’identifiant d’alarme, l’identifiant de notification,
 le titre, le texte, les deux libellés, les noms de handlers `stop_handler` et
 `snooze_handler`, ainsi que leur payload. Tous sont fournis par l’application.
@@ -253,8 +324,12 @@ respectivement des API `Audio` et `Alarm` dans ces handlers ; aucune durée n’
 Les échecs asynchrones des handlers sont journalisés dans Logcat. L’action effectuée
 n’est pas une transaction durable : l’application doit rendre ses traitements idempotents.
 
-L’application technique contient désormais les boutons « Prendre une photo » et
-« Écran d’alarme ». Son bouton Reporter ne programme rien : il vérifie la livraison
+Le wrapper choisit Standard, sans média ni sous-titre, avec `stop` Primary et
+`snooze` Secondary et le payload partagé de l’ancien format.
+
+L’application technique contient les boutons « Prendre une photo », « Écran
+d’alarme » et « Notification d’alarme ». Elle utilise la photo capturée comme média
+facultatif et les actions Commencer/Reporter. Son bouton Reporter ne programme rien : il vérifie la livraison
 au handler OCaml, tandis que la politique de report appartient à chaque client.
 
 ## Aperçus, défilement et champs texte

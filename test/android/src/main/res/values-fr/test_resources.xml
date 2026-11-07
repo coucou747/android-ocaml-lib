@@ -1,0 +1,4 @@
+<resources>
+    <string name="integration_localized_greeting">Bonjour été 🐫</string>
+    <string name="integration_string_placeholder">Tâche %1$s</string>
+</resources>

@@ -16,6 +16,12 @@ android {
     packaging { jniLibs { keepDebugSymbols += ['**/libintegration.so'] } }
     sourceSets.main.jniLibs.srcDirs = [new File(rootDir, '../_build/test-jni')]
 }
+// Optional integration-only manifest overlays. The AAR declares no permissions.
+if (providers.gradleProperty('connectivityCapabilities').isPresent()) {
+    def capability = providers.gradleProperty('connectivityCapabilities').get()
+    if (!(capability in ['bluetooth', 'audio', 'all', 'location'])) throw new GradleException('Unknown connectivityCapabilities')
+    android.sourceSets.debug.manifest.srcFile("src/connectivity/${capability}/AndroidManifest.xml")
+}
 dependencies {
     implementation "com.google.android.gms:play-services-code-scanner:${config.getProperty('codeScannerVersion')}"
     implementation "androidx.constraintlayout:constraintlayout:${config.getProperty('constraintLayoutVersion')}"

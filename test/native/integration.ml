@@ -114,8 +114,38 @@ let refresh_permission_settings page =
   | Ok () -> Android.Permissions.check_special Background_location >>= function
     | Error e -> Lwt.return (Error e)
     | Ok granted -> Android.Settings.set_summary page ~key:"gps-background" (if granted then "Autorisé" else "Non autorisé")
-let settings_schema = match Android.Settings.define ~store:"integration-settings" [
-  Section "Démonstration des réglages";
+let bluetooth_settings = Android.Connectivity_settings.permissions ~key:"bluetooth-scan" ~title:"Appareils Bluetooth"
+  ~unknown:"Vérification…" ~granted:"Autorisé" ~denied:"Non autorisé" ~operation:(Scan Without_location)
+let bluetooth_devices activity () =
+  Android.Bluetooth.Permissions.request activity Connect >>= function
+  | Error _ -> status "Accès Bluetooth indisponible"
+  | Ok false -> status "Accès Bluetooth refusé"
+  | Ok true -> Android.Bluetooth.bonded_devices () >>= function
+    | Error _ -> status "Appareils indisponibles" | Ok devices -> status (Printf.sprintf "%d appareils appairés" (List.length devices))
+let bluetooth_scan activity () =
+  Android.Bluetooth.Permissions.request activity (Scan Without_location) >>= function
+  | Error _ -> status "Découverte Bluetooth indisponible"
+  | Ok false -> status "Découverte Bluetooth refusée"
+  | Ok true -> Android.Bluetooth.scan activity ~mode:Without_location ~timeout_ms:10000 ~filters:[]
+      (fun event -> match event.device with None -> Lwt.return_unit | Some device -> status (Option.value device.name ~default:device.address)) >>= function
+    | Error _ -> status "Découverte impossible" | Ok _ -> status "Recherche Bluetooth lancée"
+let demo_player = ref None
+let play_audio activity () =
+  Android.Audio.default_alarm_uri () >>= require >>= function
+  | None -> status "Aucun son configuré"
+  | Some uri -> (match !demo_player with None -> Lwt.return_unit | Some p -> Android.Audio.stop p >|= ignore) >>= fun () ->
+    Android.Audio.create activity ~usage:Media ~uri ~loop:false >>= require >>= fun p -> demo_player:=Some p;status "Lecture audio"
+let background_audio activity () = match !demo_player with
+  | None -> status "Démarrer une lecture d’abord"
+  | Some player ->
+    Android.Notification.create_channel ~id:"integration-audio" ~name:"Lecture audio" ~importance:Low >>= require >>= fun () ->
+    Android.Permissions.request activity ["android.permission.POST_NOTIFICATIONS"] >>= fun _ ->
+    Android.Resources.resolve ~scope:Application ~kind:Drawable ~name:"integration_alarm_icon" >>= require >>= fun icon ->
+    let notification:Android.Connectivity.notification={id=73;channel="integration-audio";small_icon=icon;title="Lecture audio";text="Démonstration";pause_label="Pause";resume_label="Reprendre";stop_label="Arrêter"} in
+    Android.Connectivity.start_audio activity ~notification ~handler:"integration.connectivity" [player] >>= function
+    | Ok () -> status "Audio en arrière-plan actif" | Error _ -> status "Audio en arrière-plan indisponible"
+let settings_schema = match Android.Settings.define ~store:"integration-settings" ([
+  Android.Settings.Section "Démonstration des réglages";
   Info {key="health-state";title="État de Health Connect";text="Vérification…"};
   Toggle {key="enabled";title="Activer la démonstration";description=None;initial=false};
   Text {key="description";title="Description";description=None;initial="Démonstration API";multiline=true;validate=None};
@@ -123,7 +153,7 @@ let settings_schema = match Android.Settings.define ~store:"integration-settings
     validate=Some (fun n -> if n>0L then Ok () else Error "Un entier positif est requis")};
   Choice {key="display";title="Présentation";description=None;initial="compact";options=["compact","Compacte";"detail","Détaillée"]};
   Status_action {key="health-background";title="Santé en arrière-plan";text="Vérification…";run=manage_health_background};
-  Status_action {key="gps-background";title="GPS en arrière-plan";text="Vérification…";run=manage_gps_background}]
+  Status_action {key="gps-background";title="GPS en arrière-plan";text="Vérification…";run=manage_gps_background}] @ bluetooth_settings.items)
   with Ok schema -> schema | Error _ -> failwith "Invalid demo settings"
 let form_dialog activity () =
   Android.Form.container activity >>= require >>= fun content ->
@@ -166,6 +196,10 @@ let render activity =
     Android.Ui.add layout button >>= require >>= fun () ->
     Android.Events.on_click button callback >>= require >|= fun _ -> ())
     ["Dialogue d’information",alert_action activity; "Confirmer une action",confirm_action activity; "Prendre une photo",capture activity; "Scanner un QR code",scan_qr activity; "Écran d’alarme",alarm activity; "Notification d’alarme",alarm_notification activity; "Date, son et ressource",local_status;
+     "Appareils Bluetooth",bluetooth_devices activity; "Scanner BLE",bluetooth_scan activity;
+     "Lire un son",play_audio activity; "Audio en arrière-plan",background_audio activity;
+     "Arrêter l’audio",(fun () -> match !demo_player with None -> Lwt.return_unit | Some p -> demo_player:=None;Android.Audio.stop p >|= ignore);
+     "Réglages Bluetooth",(fun () -> Android.Bluetooth.open_settings activity >>= require);
      "Health Connect : état",health_status; "Health Connect : autorisations",health_permissions activity;
      "Health Connect : accès en arrière-plan",health_background_permissions activity;
      "GPS : autorisation en arrière-plan",gps_background_permissions activity;
@@ -221,7 +255,7 @@ let render activity =
   preview_photo () >>= fun () -> Android.Ui.show activity root >>= require
 let () =
   (match Android.Settings.register ~name:"integration" settings_schema
-    ~on_resume:(fun _ page ->
+    ~on_resume:(fun activity page ->
       (Android.Health_connect.status () >>= function
       | Error e -> Lwt.return (Error e)
       | Ok Unavailable -> Android.Settings.set_info page ~key:"health-state" "Indisponible"
@@ -230,10 +264,12 @@ let () =
         | Error e -> Lwt.return (Error e)
         | Ok permissions -> Android.Settings.set_info page ~key:"health-state"
           (Printf.sprintf "Disponible — %d familles autorisées" (List.length permissions))) >>= function
-      | Error e -> Lwt.return (Error e) | Ok () -> refresh_permission_settings page)
+      | Error e -> Lwt.return (Error e) | Ok () -> refresh_permission_settings page >>= function
+        | Error e -> Lwt.return (Error e) | Ok () -> bluetooth_settings.on_resume activity page)
     ~on_change:(fun ~key _ -> status ("Réglage enregistré : "^key))
     ~on_error:(fun _ -> status "Erreur de réglage") with
     | Ok () -> () | Error _ -> failwith "Duplicate settings schema");
+  (match Android.Connectivity.register_handler ~name:"integration.connectivity" (fun event -> status event.kind >|= fun () -> Android.Background.Success) with Ok () -> () | Error _ -> failwith "Connectivity handler");
   let register name handler = match Android.Runtime.register ~name handler with
     | Ok () -> () | Error _ -> failwith "Duplicate integration handler" in
   register "integration.stop" (fun _ ->

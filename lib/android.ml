@@ -52,6 +52,14 @@ module Subscription = struct
     unit_call "unsubscribe" [t.id]
 end
 
+let acquire_async start await close args =
+  Lwt.no_cancel (one start args) >>= function Error e -> Lwt.return (Error e) | Ok id ->
+  let retained=ref false in
+  Lwt.finalize (fun () -> one await [id] >|= fun result -> (match result with Ok _ -> retained:=true | _ -> ());result)
+    (fun () -> if !retained then Lwt.return_unit else unit_call close [id] >|= ignore)
+let cancel_connection close id operation = Lwt.catch operation (function
+  | Lwt.Canceled -> unit_call close [id] >>= fun _ -> Lwt.fail Lwt.Canceled | exn -> Lwt.fail exn)
+
 let subscribe command args callback =
   let t = Subscription.create callback in
   unit_call command (t.id :: args) >|= function
@@ -464,8 +472,28 @@ module Audio = struct
   let default_alarm_uri () = call "audio.defaultAlarm" [] >|= function
     | Ok [||] -> Ok None | Ok [|uri|] -> Ok (Some uri)
     | Error e -> Error e | Ok _ -> Error (Error.Protocol "Default alarm URI")
-  let play ~uri ~loop = one "audio.play" [uri; string_of_bool loop]
-  let stop p = unit_call "audio.stop" [p]
+  type usage = Media | Alarm | Notification | Speech
+  type output = {id:int;name:string;kind:int}
+  let usage = function Media -> "media" | Alarm -> "alarm" | Notification -> "notification" | Speech -> "speech"
+  let create activity ~usage:u ~uri ~loop = acquire_async "audio2.create" "audio2.await" "audio2.close" [activity;usage u;uri;string_of_bool loop]
+  let pause p = unit_call "audio2.pause" [p]
+  let resume p = unit_call "audio2.resume" [p]
+  let seek p ~position_ms = if position_ms<0 then invalid "Negative position" else unit_call "audio2.seek" [p;s position_ms]
+  let position p = int "audio2.position" [p]
+  let duration p = int "audio2.duration" [p]
+  let state p = one "audio2.state" [p]
+  let set_volume p volume = if not (Float.is_finite volume) || volume<0. || volume>1. then invalid "Volume must be in [0,1]" else unit_call "audio2.volume" [p;string_of_float volume]
+  let outputs () = one "audio2.outputs" [] >|= function Error e -> Error e | Ok json ->
+    (try let open Yojson.Safe.Util in Ok (Yojson.Safe.from_string json |> to_list |> List.map (fun j -> {id=j |> member "id" |> to_int;name=j |> member "name" |> to_string;kind=j |> member "kind" |> to_int}))
+     with _ -> Error (Error.Protocol "Audio outputs"))
+  let preferred_output p id = unit_call "audio2.output" [p;(match id with None -> "" | Some id -> s id)]
+  let routed_output p = int "audio2.routed" [p] >|= Result.map (fun id -> if id=0 then None else Some id)
+  let show_output_picker activity = unit_call "audio2.picker" [activity]
+  let open_bluetooth_settings activity = unit_call "bt.settings" [activity]
+  let on_event p callback = subscribe "audio2.listen" [p] (function [|event|] -> callback event | _ -> Lwt.return_unit)
+  let on_outputs_changed callback = subscribe "audio2.outputsListen" [] (fun _ -> callback ())
+  let play ~uri ~loop = acquire_async "audio2.create" "audio2.await" "audio2.close" ["";"alarm";uri;string_of_bool loop]
+  let stop p = unit_call "audio2.close" [p]
 end
 module Vibrator = struct
   let vibrate ~duration_ms = if duration_ms <= 0 then invalid "duration_ms must be positive"
@@ -761,6 +789,73 @@ module Location = struct
   let stop_tracking_service () = unit_call "location.serviceStop" []
 end
 
+module Bluetooth = struct
+  type device = {address:string;name:string option;bonded:bool}
+  type scan_mode = Without_location | For_location
+  type filter = {service_uuid:string option;name:string option;manufacturer:(int * string) option}
+  type event = {kind:string;device:device option;handle:string option;data:string;status:int}
+  let device j = let open Yojson.Safe.Util in {address=j |> member "address" |> to_string;
+    name=(match member "name" j with `String s -> Some s | _ -> None);bonded=j |> member "bonded" |> to_bool}
+  let decode_event = function
+    | [|kind;d;h;data;code|] -> (try Ok {kind;device=(if d="" then None else Some (device (Yojson.Safe.from_string d)));handle=(if h="" then None else Some h);data;status=int_of_string code} with _ -> Error (Error.Protocol "Bluetooth event"))
+    | _ -> Error (Error.Protocol "Bluetooth event fields")
+  let events command args callback = subscribe command args (fun fields -> match decode_event fields with Ok e -> callback e | Error e -> Lwt.fail_with (match e with Error.Protocol m -> m | _ -> "Bluetooth event"))
+  let available () = bool "bt.available" []
+  let enabled () = bool "bt.enabled" []
+  let request_enable activity = bool "bt.enable" [activity]
+  let open_settings activity = unit_call "bt.settings" [activity]
+  let bonded_devices () = one "bt.bonded" [] >|= function Error e -> Error e | Ok json ->
+    (try Ok (List.map device (Yojson.Safe.Util.to_list (Yojson.Safe.from_string json))) with _ -> Error (Error.Protocol "Bluetooth devices"))
+  let pair activity device = unit_call "bt.pair" [activity;device.address]
+  let on_event callback = events "bt.listen" [] callback
+  let mode = function Without_location -> "without_location" | For_location -> "location"
+  module Permissions = struct
+    type operation = Connect | Pair | Scan of scan_mode
+    let args = function Connect -> ["connect"] | Pair -> ["pair"] | Scan m -> [mode m]
+    let required operation = call "bt.permissions" (args operation) >|= Result.map Array.to_list
+    let declared operation = bool "bt.declared" (args operation)
+    let granted operation = bool "bt.granted" (args operation)
+    let request activity operation = bool "bt.request" (activity::args operation)
+    let open_settings activity = unit_call "bt.appSettings" [activity]
+  end
+  let scan activity ~mode:m ~timeout_ms ~filters callback =
+    if timeout_ms<=0 || Int64.of_int timeout_ms>2147483647L || List.exists (fun f -> match f.manufacturer with Some (id,_) -> id<0 || id>65535 | None -> false) filters then invalid "Invalid scan timeout or manufacturer id" else
+    let optional f = function None -> `Null | Some v -> f v in
+    let json=`List (List.map (fun f -> `Assoc ["uuid",optional (fun s -> `String s) f.service_uuid;"name",optional (fun s -> `String s) f.name;
+      "manufacturer",optional (fun (id,data) -> `Assoc ["id",`Int id;"data",`List (List.init (String.length data) (fun i -> `Int (Char.code data.[i])))]) f.manufacturer]) filters) in
+    events "bt.scan" [activity;mode m;s timeout_ms;Yojson.Safe.to_string json] callback
+  let discover activity ~mode:m ~timeout_ms callback = if timeout_ms<=0 || Int64.of_int timeout_ms>2147483647L then invalid "Positive discovery timeout required" else events "bt.discover" [activity;mode m;s timeout_ms] callback
+  let connect command activity device ~connect_timeout_ms ~operation_timeout_ms extra =
+    if connect_timeout_ms<=0 || operation_timeout_ms<=0 || Int64.of_int connect_timeout_ms>2147483647L || Int64.of_int operation_timeout_ms>2147483647L then invalid "Positive connection and operation timeouts required" else
+    acquire_async command "bt.await" "bt.close" ([activity;device.address;s connect_timeout_ms;s operation_timeout_ms]@extra)
+  module Gatt = struct
+    type t = {id:string;lock:Lwt_mutex.t}
+    type attribute = {handle:string;uuid:string;kind:string;parent:string;properties:int}
+    let connect = connect "bt.gattConnect"
+    let connect activity device ~connect_timeout_ms ~operation_timeout_ms = connect activity device ~connect_timeout_ms ~operation_timeout_ms [] >|= Result.map (fun id -> {id;lock=Lwt_mutex.create ()})
+    let close t = unit_call "bt.close" [t.id]
+    let operation t f = Lwt_mutex.with_lock t.lock (fun () -> cancel_connection "bt.close" t.id f)
+    let discover t = operation t (fun () -> one "bt.gattDiscover" [t.id]) >|= function Error e -> Error e | Ok json ->
+      (try let open Yojson.Safe.Util in Ok (Yojson.Safe.from_string json |> to_list |> List.map (fun j -> {
+        handle=j |> member "handle" |> to_string;uuid=j |> member "uuid" |> to_string;kind=j |> member "kind" |> to_string;parent=j |> member "parent" |> to_string;properties=j |> member "properties" |> to_int})) with _ -> Error (Error.Protocol "GATT attributes"))
+    let read t attribute = operation t (fun () -> one "bt.gattRead" [t.id;attribute.handle])
+    let write t attribute ~with_response data = operation t (fun () -> unit_call "bt.gattWrite" [t.id;attribute.handle;string_of_bool with_response;data])
+    let notifications t attribute ~indicate ~enabled = operation t (fun () -> unit_call "bt.gattNotify" [t.id;attribute.handle;string_of_bool indicate;string_of_bool enabled])
+    let mtu t size = if size<23 || size>517 then invalid "MTU must be 23..517" else operation t (fun () -> int "bt.gattMtu" [t.id;s size])
+    let rssi t = operation t (fun () -> int "bt.gattRssi" [t.id])
+    let on_event t callback = events "bt.connectionListen" [t.id] callback
+  end
+  module Rfcomm = struct
+    type t = string
+    let connect activity device ~uuid ~secure ~connect_timeout_ms ~operation_timeout_ms = connect "bt.rfcommConnect" activity device ~connect_timeout_ms ~operation_timeout_ms [uuid;string_of_bool secure]
+    let read t ~max_bytes = if max_bytes<=0 || Int64.of_int max_bytes>2147483647L then invalid "Positive read bound required" else cancel_connection "bt.close" t (fun () -> call "bt.rfcommRead" [t;s max_bytes]) >|= function
+      | Error e -> Error e | Ok [||] -> Ok None | Ok [|data|] -> Ok (Some data) | _ -> Error (Error.Protocol "RFCOMM read")
+    let write t data = cancel_connection "bt.close" t (fun () -> unit_call "bt.rfcommWrite" [t;data])
+    let close t = unit_call "bt.close" [t]
+    let on_event t callback = events "bt.connectionListen" [t] callback
+  end
+end
+
 module Settings = struct
   type item =
     | Section of string
@@ -918,6 +1013,69 @@ module Settings = struct
         | Error e -> release page >>= fun _ -> on_error e >|= fun () -> Background.Failure)
   let open_ activity = unit_call "settings.open" [activity]
 
+end
+
+module Connectivity = struct
+  type service_kind = Connected_device | Media_playback
+  let required_permissions kind = call "connectivity.permissions" [match kind with Connected_device -> "bluetooth" | Media_playback -> "audio"] >|= Result.map Array.to_list
+  type notification = {id:int;channel:string;small_icon:int;title:string;text:string;pause_label:string;resume_label:string;stop_label:string}
+  type connection = Gatt of Bluetooth.Gatt.t | Rfcomm of Bluetooth.Rfcomm.t
+  let start activity kind notification handler resources =
+    if notification.id<=0 || Int64.of_int notification.id>2147483647L || notification.small_icon<=0 || Int64.of_int notification.small_icon>2147483647L || notification.channel="" || handler="" ||
+      (kind="audio" && (notification.pause_label="" || notification.resume_label="")) || notification.stop_label="" then invalid "Explicit notification, labels, handler and resources required" else
+    unit_call "connectivity.start" ([activity;kind;s notification.id;notification.channel;s notification.small_icon;notification.title;notification.text;handler;
+      notification.pause_label;notification.resume_label;notification.stop_label]@resources)
+  let start_bluetooth activity ~notification ~handler connections = start activity "bluetooth" notification handler (List.map (function Gatt t -> t.Bluetooth.Gatt.id | Rfcomm t -> t) connections)
+  let start_audio activity ~notification ~handler players = start activity "audio" notification handler players
+  let connect_gatt device ~connect_timeout_ms ~operation_timeout_ms = Bluetooth.Gatt.connect "service:bluetooth" device ~connect_timeout_ms ~operation_timeout_ms
+  let connect_rfcomm device ~uuid ~secure ~connect_timeout_ms ~operation_timeout_ms = Bluetooth.Rfcomm.connect "service:bluetooth" device ~uuid ~secure ~connect_timeout_ms ~operation_timeout_ms
+  let create_player ~usage ~uri ~loop = Audio.create "service:audio" ~usage ~uri ~loop
+  let stop_bluetooth () = unit_call "connectivity.stop" ["bluetooth"]
+  let stop_audio () = unit_call "connectivity.stop" ["audio"]
+  let event token = call "connectivity.event" [token] >|= function Error e -> Error e | Ok fields -> Bluetooth.decode_event fields
+  let register_handler ~name callback = Runtime.register ~name (fun token -> event token >>= function
+    | Error _ -> Lwt.return Background.Failure | Ok event -> callback event)
+end
+
+module Connectivity_settings = struct
+  let ( let* ) p f = p >>= function Error e -> Lwt.return (Error e) | Ok v -> f v
+  type bundle = {items:Settings.item list;on_resume:Activity.t -> Settings.page -> unit response}
+  let permissions ~key ~title ~unknown ~granted ~denied ~operation =
+    let run activity = Bluetooth.Permissions.granted operation >>= function Error e -> Lwt.return (Error e)
+      | Ok true -> Bluetooth.Permissions.open_settings activity | Ok false -> Bluetooth.Permissions.request activity operation >|= Result.map (fun _ -> ()) in
+    {items=[Settings.Status_action {key;title;text=unknown;run}];on_resume=(fun _ page -> Bluetooth.Permissions.granted operation >>= function
+      | Error e -> Lwt.return (Error e) | Ok yes -> Settings.set_summary page ~key (if yes then granted else denied))}
+  let device ~store ~key ~title ~confirm_label ~unknown ~error_text ~devices ~on_select =
+    let run activity =
+      let* devices=devices () in let* content=Ui.column activity in
+      Lwt.finalize (fun () ->
+        let selected=ref None and last_error=ref None in
+        let* label=Ui.text activity unknown in let* ()=Ui.add content label in
+        let rec add = function [] -> Lwt.return (Ok ()) | (d:Bluetooth.device)::rest ->
+          let name=Option.value d.name ~default:d.address in
+          let* button=Ui.secondary_button activity name in let* ()=Ui.add content button in
+          let* _=Events.on_click button (fun () -> selected:=Some d;Ui.set_text label name >|= ignore) in add rest in
+        let* ()=add devices in
+        match Dialog.buttons [{role=Positive;label=confirm_label}] with Error e -> Lwt.return (Error e) | Ok buttons ->
+        let* dialog=Dialog.show activity ~title ~content ~buttons ~cancelable:true
+          ~on_error:(fun e -> last_error:=Some e;Ui.set_text label (error_text e) >|= ignore)
+          ~on_button:(fun _ -> match !selected with None -> Lwt.return (Ok Dialog.Keep_open) | Some d ->
+            last_error:=None;let* ()=on_select d in let* ()=Storage.Preferences.set ~store ~key (Text d.address) in Lwt.return (Ok Dialog.Close)) in
+        let* _=Dialog.closed dialog in Lwt.return (match !last_error with None -> Ok () | Some e -> Error e))
+        (fun () -> Ui.release content >|= ignore) in
+    {items=[Settings.Status_action {key;title;text=unknown;run}];on_resume=(fun _ page -> Storage.Preferences.get ~store ~key >>= function
+      | Error e -> Lwt.return (Error e) | Ok (Some (Text address)) -> Settings.set_summary page ~key address | Ok None -> Settings.set_summary page ~key unknown | Ok _ -> invalid "Stored device address must be text")}
+  let connection ~key ~title ~unknown ~read_state ~run =
+    {items=[Settings.Status_action {key;title;text=unknown;run}];on_resume=(fun _ page -> read_state () >>= function Error e -> Lwt.return (Error e) | Ok text -> Settings.set_summary page ~key text)}
+  let audio_output ~key ~title ~unknown ~player =
+    connection ~key ~title ~unknown
+      ~read_state:(fun () -> match player () with None -> Lwt.return (Ok unknown) | Some p ->
+        let* id=Audio.routed_output p in let* outputs=Audio.outputs () in
+        Lwt.return (Ok (match List.find_opt (fun (o:Audio.output) -> Some o.id=id) outputs with None -> unknown | Some output -> output.name)))
+      ~run:(fun activity -> match player () with None -> Lwt.return (Error (Error.Unavailable "No active audio player")) | Some _ -> Audio.show_output_picker activity)
+  let volume ~key ~title ~description ~initial ~player =
+    {items=[Settings.Integer {key;title;description=Some description;initial;validate=Some (fun n -> if n>=0L && n<=100L then Ok () else Error description)}];on_resume=(fun _ page -> match player () with None -> Lwt.return (Ok ()) | Some p -> Settings.get page.schema ~key >>= function Error e -> Lwt.return (Error e) | Ok (Storage.Preferences.Int n) -> Audio.set_volume p (Int64.to_float n /. 100.) | Ok _ -> invalid "Volume percentage required")}
+  let apply_volume player = function Storage.Preferences.Int n when n>=0L && n<=100L -> Audio.set_volume player (Int64.to_float n /. 100.) | _ -> invalid "Volume percentage required"
 end
 
 module Authentication = struct

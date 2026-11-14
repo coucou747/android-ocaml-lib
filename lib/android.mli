@@ -324,6 +324,25 @@ module Audio : sig
       No ringtone or notification sound is substituted. *)
   val default_alarm_uri : unit -> string option response
   val play : uri:string -> loop:bool -> player response
+  type usage = Media | Alarm | Notification | Speech
+  type output = {id:int;name:string;kind:int}
+  val create : Activity.t -> usage:usage -> uri:string -> loop:bool -> player response
+  val pause : player -> unit response
+  val resume : player -> unit response
+  val seek : player -> position_ms:int -> unit response
+  val position : player -> int response
+  val duration : player -> int response
+  val state : player -> string response
+  val set_volume : player -> float -> unit response
+  val outputs : unit -> output list response
+  (** API 28+. None restores system routing. Failure is explicit. *)
+  val preferred_output : player -> int option -> unit response
+  val routed_output : player -> int option response
+  (** System picker on API 34+, otherwise Unavailable. *)
+  val show_output_picker : Activity.t -> unit response
+  val open_bluetooth_settings : Activity.t -> unit response
+  val on_event : player -> (string -> unit Lwt.t) -> Subscription.t response
+  val on_outputs_changed : (unit -> unit Lwt.t) -> Subscription.t response
   val stop : player -> unit response
 end
 module Vibrator : sig
@@ -472,6 +491,54 @@ end
 
 (** Application-defined settings, persisted in Storage.Preferences. No permissions
     are requested implicitly. Recreate pages after activity recreation. *)
+module Bluetooth : sig
+  type device = {address:string;name:string option;bonded:bool}
+  type scan_mode = Without_location | For_location
+  type filter = {service_uuid:string option;name:string option;manufacturer:(int * string) option}
+  type event = {kind:string;device:device option;handle:string option;data:string;status:int}
+  val available : unit -> bool response
+  val enabled : unit -> bool response
+  val request_enable : Activity.t -> bool response
+  val open_settings : Activity.t -> unit response
+  val bonded_devices : unit -> device list response
+  val pair : Activity.t -> device -> unit response
+  val on_event : (event -> unit Lwt.t) -> Subscription.t response
+  module Permissions : sig
+    type operation = Connect | Pair | Scan of scan_mode
+    val required : operation -> string list response
+    val declared : operation -> bool response
+    val granted : operation -> bool response
+    val request : Activity.t -> operation -> bool response
+    val open_settings : Activity.t -> unit response
+  end
+  (** Foreground discovery only; timeout or Subscription.cancel stops scanning.
+      Mode must agree with the client's neverForLocation declaration. *)
+  val scan : Activity.t -> mode:scan_mode -> timeout_ms:int -> filters:filter list -> (event -> unit Lwt.t) -> Subscription.t response
+  val discover : Activity.t -> mode:scan_mode -> timeout_ms:int -> (event -> unit Lwt.t) -> Subscription.t response
+  module Gatt : sig
+    type t
+    type attribute = {handle:string;uuid:string;kind:string;parent:string;properties:int}
+    val connect : Activity.t -> device -> connect_timeout_ms:int -> operation_timeout_ms:int -> t response
+    val close : t -> unit response
+    val discover : t -> attribute list response
+    val read : t -> attribute -> string response
+    val write : t -> attribute -> with_response:bool -> string -> unit response
+    val notifications : t -> attribute -> indicate:bool -> enabled:bool -> unit response
+    val mtu : t -> int -> int response
+    val rssi : t -> int response
+    val on_event : t -> (event -> unit Lwt.t) -> Subscription.t response
+  end
+  module Rfcomm : sig
+    type t
+    val connect : Activity.t -> device -> uuid:string -> secure:bool -> connect_timeout_ms:int -> operation_timeout_ms:int -> t response
+    (** Binary bytes, None at EOF. Operation timeout closes the socket. *)
+    val read : t -> max_bytes:int -> string option response
+    val write : t -> string -> unit response
+    val close : t -> unit response
+    val on_event : t -> (event -> unit Lwt.t) -> Subscription.t response
+  end
+end
+
 module Settings : sig
   type item =
     | Section of string
@@ -543,6 +610,38 @@ end
 (** Native passkeys and OCaml authentication orchestration. Server cryptographic
     verification and authorization remain mandatory. No WebView or private key
     access. Configuration is supplied by the consuming application. *)
+module Connectivity : sig
+  type service_kind = Connected_device | Media_playback
+  val required_permissions : service_kind -> string list response
+  (** pause_label/resume_label are used only by audio; Bluetooth-only sessions may leave them empty. *)
+  type notification = {id:int;channel:string;small_icon:int;title:string;text:string;pause_label:string;resume_label:string;stop_label:string}
+  type connection = Gatt of Bluetooth.Gatt.t | Rfcomm of Bluetooth.Rfcomm.t
+  (** Opt-in foreground services. Client must enable the service and declare its
+      permissions. No automatic restart, reconnect, boot receiver or sound resume. *)
+  val start_bluetooth : Activity.t -> notification:notification -> handler:string -> connection list -> unit response
+  val start_audio : Activity.t -> notification:notification -> handler:string -> Audio.player list -> unit response
+  (** Creation within an explicitly started session, without retaining an activity.
+      No service is started implicitly. The application owns any retry policy. *)
+  val connect_gatt : Bluetooth.device -> connect_timeout_ms:int -> operation_timeout_ms:int -> Bluetooth.Gatt.t response
+  val connect_rfcomm : Bluetooth.device -> uuid:string -> secure:bool -> connect_timeout_ms:int -> operation_timeout_ms:int -> Bluetooth.Rfcomm.t response
+  val create_player : usage:Audio.usage -> uri:string -> loop:bool -> Audio.player response
+  val stop_bluetooth : unit -> unit response
+  val stop_audio : unit -> unit response
+  val event : string -> Bluetooth.event response
+  val register_handler : name:string -> (Bluetooth.event -> Background.outcome Lwt.t) -> (unit,Error.t) result
+end
+module Connectivity_settings : sig
+  type bundle = {items:Settings.item list;on_resume:Activity.t -> Settings.page -> unit response}
+  val permissions : key:string -> title:string -> unknown:string -> granted:string -> denied:string -> operation:Bluetooth.Permissions.operation -> bundle
+  (** Device picker populated by the client (bonded_devices or prior scan results); discovery remains explicit through Bluetooth.scan.
+      Selection is stored only after on_select succeeds; never reconnects itself. *)
+  val device : store:string -> key:string -> title:string -> confirm_label:string -> unknown:string -> error_text:(Error.t -> string) -> devices:(unit -> Bluetooth.device list response) -> on_select:(Bluetooth.device -> unit response) -> bundle
+  val connection : key:string -> title:string -> unknown:string -> read_state:(unit -> string response) -> run:(Activity.t -> unit response) -> bundle
+  val audio_output : key:string -> title:string -> unknown:string -> player:(unit -> Audio.player option) -> bundle
+  val volume : key:string -> title:string -> description:string -> initial:int64 -> player:(unit -> Audio.player option) -> bundle
+  val apply_volume : Audio.player -> Storage.Preferences.value -> unit response
+end
+
 module Authentication : sig
   type error = Android of Error.t | Cancelled | No_credential | Unsupported
     | Provider_error of string | Invalid_argument of string

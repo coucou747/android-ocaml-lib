@@ -213,5 +213,6 @@ let () = Android.Runtime.set_entry (fun () ->
     Layout_smoke.run activity >>= fun () ->
     Ui_smoke.run activity >>= fun () ->
     Auth_smoke.run activity >>= fun () ->
+    Connectivity_smoke.run activity >>= fun () ->
     Gc.full_major ();
     Android.Storage.write_file ~name:"done" ~contents:binary >>= require) >>= require >|= fun _ -> ())

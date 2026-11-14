@@ -82,7 +82,7 @@ public final class Bridge {
         if(event.equals("resumed")) current=a;
         if(!(a instanceof SettingsActivity))for(String sub:lifecycle) emit(sub,a.bridgeId,event);
         if(event.equals("destroyed")) {
-            AuthenticationSupport.cancelFor(a);DialogSupport.closeFor(a);QrScannerSupport.cancelFor(a);
+            AuthenticationSupport.cancelFor(a);DialogSupport.closeFor(a);QrScannerSupport.cancelFor(a);ConnectivitySupport.closeFor(a);
             if(current==a) current=null;
             for(Map.Entry<String,View> e:subscriptionViews.entrySet()) if(UiSupport.owner(e.getValue().getContext())==a) cleanupSubscription(e.getKey());
             objects.entrySet().removeIf(e -> {
@@ -118,10 +118,15 @@ public final class Bridge {
             if(e.getCause() instanceof Exception) throw (Exception)e.getCause(); throw e;
         }
     }
+    static void connectivityEnded(String id){subscriptions.remove(id);events.add(pack("unsubscribe",id));}
+    static Activity connectivityActivity(String id){return id.isEmpty()?null:get(id,Activity.class);}
+    static <T> T connectivityUi(Callable<T> fn) throws Exception{return ui(fn);}
+    static void connectivitySubscription(String id,Runnable close){subscriptions.put(id,close);}
     public static byte[][] dispatch(byte[] command,byte[][] bytes) {
         String op=text(command); String[] a=new String[bytes.length];
         for(int i=0;i<a.length;i++) a[i]=text(bytes[i]);
         try {
+            if(op.startsWith("bt.") || op.startsWith("audio2.") || op.startsWith("connectivity."))return ok(ConnectivitySupport.dispatch(context,op,a,bytes));
             if(op.equals("auth.passkeyStart"))return ui(()->ok(put(AuthenticationSupport.start(get(a[0],Activity.class),a[1],a[2]))));
             if(op.equals("health.backgroundRequest")) {
                 HealthConnectSupport.requireBackgroundAvailable(context);

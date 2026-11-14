@@ -791,3 +791,17 @@ Les modules `Toolbar`, `Card`, `Bottom_navigation`, `Check_box`, `Switch` et
 `Divider` exposent les composants Material et leurs événements. La démo montre
 un écran de tâches avec cartes, cases et navigation entre deux sections.
 Voir le [guide de mise en page Material](notes/MISE-EN-PAGE-MATERIAL.md).
+
+## Bluetooth et audio optionnels
+
+`Android.Bluetooth` fournit découverte classique, scan BLE, appairage, GATT client
+et RFCOMM client. `Android.Audio` ajoute les contrôles du lecteur et des sorties.
+`Android.Connectivity` gère les sessions explicites au premier plan permettant
+l'usage écran éteint ; `Connectivity_settings` fournit des réglages composables.
+
+Les applications clientes choisissent leurs permissions et activent les services
+nécessaires : aucune permission Bluetooth ou microphone n'est ajoutée par l'AAR.
+Consulter [le contrat, les manifestes et les exemples](notes/BLUETOOTH-AUDIO.md).
+Le choix de scan avec/sans localisation est explicite, la reprise après mort du
+processus appartient à l'application. Aucun scan permanent ou lancement audio
+n'est déclenché par la simple ouverture des réglages.

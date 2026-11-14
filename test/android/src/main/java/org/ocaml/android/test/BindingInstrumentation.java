@@ -308,6 +308,7 @@ public final class BindingInstrumentation extends Instrumentation {
             authenticationTests();
             healthLocationTests(owner);
             final Activity settingsOwner=activity;onUi(()->{org.ocaml.android.SettingsChecks.run(settingsOwner);org.ocaml.android.AlarmPresentationChecks.run(settingsOwner);return null;});
+            org.ocaml.android.ConnectivityChecks.run(activity);
             utilityTests(owner);
             resourceStringTests();
             photoTests(owner);

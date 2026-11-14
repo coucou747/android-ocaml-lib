@@ -1,0 +1,7 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+  <uses-permission android:name="android.permission.WAKE_LOCK" />
+  <application>
+    <service android:name="org.ocaml.android.AudioPlaybackService" android:enabled="true" tools:replace="android:enabled" />
+  </application>
+</manifest>

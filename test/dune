@@ -27,3 +27,8 @@
  (name test_alarm_presentation)
  (modules test_alarm_presentation)
  (libraries android-ocaml-lib))
+
+(test
+ (name test_connectivity)
+ (modules test_connectivity)
+ (libraries android-ocaml-lib lwt.unix))
